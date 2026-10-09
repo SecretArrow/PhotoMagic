@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useEditorStore } from '../../state/editorStore';
 import { APP_VERSION } from '../../engine/document';
 import { exportComposite, downloadBlob, safeFilename, type ExportFormat } from '../../formats/api';
+import { exportPsd } from '../../formats/psd';
 import { saveProject } from '../../documents/project';
 import { useI18n } from '../../i18n';
 import { toast } from '../../hooks/use-toast';
@@ -26,11 +27,13 @@ import { SelectRow, SliderRow, SwitchRow } from '../panels/controls';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { WorkspaceDialogProps } from './NewDocumentDialog';
 
+type UiExportFormat = ExportFormat | 'psd';
+
 export default function ExportDialog({ open, onOpenChange }: WorkspaceDialogProps) {
   const { t } = useI18n();
   const doc = useEditorStore((s) => s.doc);
 
-  const [format, setFormat] = useState<ExportFormat>('png');
+  const [format, setFormat] = useState<UiExportFormat>('png');
   const [quality, setQuality] = useState(95);
   const [scale, setScale] = useState(1);
   const [transparent, setTransparent] = useState(true);
@@ -42,9 +45,16 @@ export default function ExportDialog({ open, onOpenChange }: WorkspaceDialogProp
   const runExport = async () => {
     setBusy(true);
     try {
-      const result = await exportComposite({ doc, format, quality: quality / 100, scale, transparent });
-      downloadBlob(result.blob, result.filename);
-      toast({ title: t('toast.exported', { name: result.filename }) });
+      if (format === 'psd') {
+        const blob = await exportPsd(doc);
+        const filename = `${safeFilename(doc.name)}.psd`;
+        downloadBlob(blob, filename);
+        toast({ title: t('toast.exported', { name: filename }) });
+      } else {
+        const result = await exportComposite({ doc, format, quality: quality / 100, scale, transparent });
+        downloadBlob(result.blob, result.filename);
+        toast({ title: t('toast.exported', { name: result.filename }) });
+      }
       onOpenChange(false);
     } catch {
       toast({ title: t('toast.nothingToExport') });
@@ -89,24 +99,30 @@ export default function ExportDialog({ open, onOpenChange }: WorkspaceDialogProp
             <SelectRow
               label={t('dialog.export.format')}
               value={format}
-              onValueChange={(v) => setFormat(v as ExportFormat)}
+              onValueChange={(v) => setFormat(v as UiExportFormat)}
               items={[
                 { value: 'png', label: 'PNG' },
                 { value: 'jpeg', label: 'JPEG' },
                 { value: 'webp', label: 'WebP' },
+                { value: 'psd', label: 'PSD' },
               ]}
             />
-            {format !== 'png' ? (
+            {format === 'psd' ? (
+              <p className="text-[10px] leading-relaxed text-muted-foreground/80">{t('export.psdNote')}</p>
+            ) : null}
+            {format !== 'png' && format !== 'psd' ? (
               <SliderRow label={t('dialog.export.quality')} value={quality} min={1} max={100} onValueChange={setQuality} />
             ) : null}
-            <SliderRow label={t('dialog.export.scale')} value={Math.round(scale * 100)} min={10} max={400} onValueChange={(v) => setScale(v / 100)} />
+            {format !== 'psd' ? (
+              <SliderRow label={t('dialog.export.scale')} value={Math.round(scale * 100)} min={10} max={400} onValueChange={(v) => setScale(v / 100)} />
+            ) : null}
             {format === 'jpeg' ? (
               <SwitchRow label={t('dialog.export.transparent')} checked={false} onCheckedChange={() => undefined} className="opacity-50" />
-            ) : (
+            ) : format === 'psd' ? null : (
               <SwitchRow label={t('dialog.export.transparent')} checked={transparent} onCheckedChange={setTransparent} />
             )}
             {format === 'jpeg' ? <p className="text-[10px] text-muted-foreground/80">{t('export.transparentNote')}</p> : null}
-            <p className="text-[11px] text-muted-foreground">{t('export.estimatedSize', { w: outW, h: outH })}</p>
+            {format !== 'psd' ? <p className="text-[11px] text-muted-foreground">{t('export.estimatedSize', { w: outW, h: outH })}</p> : null}
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 {t('dialog.cancel')}

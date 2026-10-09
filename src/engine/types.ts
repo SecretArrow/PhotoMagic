@@ -337,7 +337,7 @@ export interface FilterParamDef {
 export interface FilterDef {
   op: string;
   labelKey: string;
-  category: 'blur' | 'sharpen' | 'noise' | 'stylize' | 'distort' | 'light' | 'artistic';
+  category: 'blur' | 'sharpen' | 'noise' | 'stylize' | 'distort' | 'light' | 'artistic' | 'ai';
   params: FilterParamDef[];
   /** worker-side pixel operation */
   apply(data: Uint8ClampedArray, width: number, height: number, params: Record<string, number | string | boolean>): void;

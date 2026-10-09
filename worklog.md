@@ -155,3 +155,45 @@ Work Log:
 Stage Summary:
 - Workspace in perfect sync readiness; pending sandbox commit 6a1bb1d pushed to origin/main
 - App v1.0.0 healthy: typecheck 0 errors, 71/71 tests, server 200
+
+---
+Task ID: B1
+Agent: general-purpose (PSD writer)
+Task: Self-contained Photoshop PSD (v1, RGB, 8-bit) writer with layers + Vitest suite
+
+Work Log:
+- Read worklog, engine contracts (types.ts, render.ts, raster.ts, document.ts, blend.ts, paint.ts), documents/project.ts (serializer style), formats/api.ts (export conventions), vitest.config.ts, eslint.config.mjs, existing tests
+- Confirmed doc.layers is bottom→top (types.ts) → PSD records written top-first via reversed iteration; opacity field is 0..1 → scaled ×255 rounded
+- Created src/formats/psd.ts: PSD v1 writer (big-endian DataView, ByteWriter class), no deps, browser-safe
+  - exportPsd(doc): 26-byte header (8BPS, v1, 4ch, dims, 8bpc, RGB); empty color-mode + resources; layer & mask section (u32 sectionLen = layerInfo+pad+8) with per-layer records (rect, 4 channel infos ids 0/1/2/-1 with exact dataLengths, 8BIM + PSD blend key, opacity, clipping 0, flags bit1=hidden, pascal name 4-byte-aligned min 4) then grouped RLE channel data (compression 1, u16 row table, PackBits rows) then even-length pad (Adobe rounding, inclusive), global mask len 0; composite section = composeDocument → planar R,G,B,A RLE (one u16 row table for all 4×h rows)
+  - Layer mapping: raster layers → own canvas + x/y offset; text/shape/fill/adjustment/group → renderLayerIsolated at 0,0 doc-size; hidden layers included with flag 2; zero-size layers skipped; blend union → PSD keys (norm/mul /scrn/over/dark/lite/div /idiv/hLit/sLit/diff/smud/hue /sat /colr/lum ), unknown → norm; names latin-1 (non-latin1 → '?', ≤255 bytes); degenerate docs (w/h < 1) → 1×1 transparent composite
+  - Exported packBits encoder (literal (n-1) 1..128, repeat (1-n) 2..128, min repeat 2)
+- Created tests/unit/psd.test.ts (13 tests, node env): FakeCanvas/FakeContext2D shim stubbed via vi.stubGlobal('document') (putImageData/fillRect/clearRect/source-over drawImage/getImageData only; engine blends approximated as over — blend correctness asserted via PSD keys); readPSDStructure parser walks header→colorMode→resources→layer&mask (records + channel data + pad + global mask, throws on any length/signature inconsistency)→composite; reference decodePackBits decoder; tests: header offsets, 3-layer roundtrip (top-first names, rects, hidden flags, blend keys, opacity 128 @0.5, exact channel dataLength KAT 22 for solid 6×5, exact layerInfo 400/section 408), fill-layer rasterization + composite pixels, adjustment layer as doc-size record, packBits KATs (repeat, literal, mixed, >128 split, empty, lossless pseudo-random + run-heavy + pathological roundtrips), composite RLE decode on 4×3 offset solid layer, zero-layer doc, odd-sized layer-info even-padding KAT
+- Fixed during dev: sectionLength formula (info len field + info + global mask = +8), layer-info even padding counted inside the length (Adobe inclusive rounding), Uint8Array<ArrayBuffer> typing for Blob part, 'clear' not in GlobalCompositeOperation union
+
+Stage Summary:
+- Files created: src/formats/psd.ts, tests/unit/psd.test.ts (no existing files modified)
+- Public API: exportPsd(doc: DocumentState): Promise<Blob>, PSD_EXTENSION = 'psd', packBits(src: Uint8Array): Uint8Array
+- Gates: bunx vitest run tests/unit/psd.test.ts → 13/13; full suite → 84/84 (71 pre-existing intact); bunx tsc --noEmit → exit 0; bunx eslint on both files → 0 errors
+- Deviations: (1) Adobe layer-info even rounding implemented inclusive-of-pad and covered by a dedicated KAT; (2) masks/smart filters on raster layers are not baked into exported pixels (spec: raw canvas + offset); (3) shape/text layer pixel tests skipped (node lacks Path2D/canvas text) — structure path covered via fill/adjustment layers
+
+---
+Task ID: 8
+Agent: main (Super Z) + general-purpose (PSD writer, B1)
+Task: Feature drop v1.1 — AI background removal, PSD export, crop presets, mobile UX + perf, template cleanup
+
+Work Log:
+- Cleanup: removed prisma/@prisma/client/next-intl deps, prisma/, db/, src/lib/db.ts, src/app/api stub, db:* scripts, 3 template shell scripts in tests/
+- B1 (subagent): src/formats/psd.ts — PSD v1 writer (RGB 8-bit, RLE, layers w/ blend/opacity/flags/names, composite) + tests/unit/psd.test.ts (13 tests)
+- Feature: src/engine/segmentation.ts — on-device border-seeded region growing + feather; registered as filter 'remove-background' in new 'ai' category (types, registry, FilterDialog, MenuBar); i18n EN/ID
+- Feature: crop aspect presets — CropOptions in state, aspect-locked draw/resize in crop.ts (corner anchors + edge handles), 10 presets in OptionsBar; i18n EN/ID
+- Feature: PSD wired into ExportDialog (format select, honest note, quality/scale/transparency hidden); COMPATIBILITY.md updated
+- Perf: rasterBuffer fast path in render.ts (doc-aligned unfiltered layers skip buffer allocation)
+- Mobile: 44px touch targets (zoom cluster size-11 + new 1:1 button, dock h-11), overscroll-behavior none
+- FIX (pre-existing bug): commitPixelEdit never bumped revision — display kept stale composite after filter apply; added revision bump (verified via browser pixel probe: undo/redo revealed correct pixels)
+- Browser verification (agent-browser): white doc + blob → Filter→AI→Remove Background → checkerboard + intact blob (pixel probe 227,227,230); crop 1:1 drag → square rect → commit → Document 218×218; Export→PSD → toast "Exported Untitled-1.psd"; mobile 390×844 → 4-button 44px zoom cluster, 1:1 button zooms to true 100%
+
+Stage Summary:
+- 90/90 tests pass (71 old + 13 PSD + 6 segmentation), tsc clean, eslint 0 errors, dev.log clean
+- Repo leaner: 3 dead deps + 6 template files removed
+- v1.1 features shipped: on-device AI background removal, layered PSD export, 10 crop aspect presets, mobile touch targets + 1:1 zoom, renderer fast path, display-refresh bug fix

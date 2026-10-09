@@ -46,6 +46,60 @@ function normalized(x0: number, y0: number, x1: number, y1: number): CropRect {
   return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
 }
 
+/**
+ * Aspect-locked rect anchored at (ax, ay) reaching toward (px, py): the
+ * dominant drag axis decides coverage so the rect always matches `aspect`.
+ */
+function aspectRectFromAnchor(ax: number, ay: number, px: number, py: number, aspect: number): CropRect {
+  const dx = px - ax;
+  const dy = py - ay;
+  const wByDx = Math.abs(dx);
+  const hByDy = Math.abs(dy);
+  const w = Math.max(wByDx, hByDy * aspect);
+  const h = w / aspect;
+  const sx = dx < 0 ? -1 : 1;
+  const sy = dy < 0 ? -1 : 1;
+  return normalized(ax, ay, ax + sx * w, ay + sy * h);
+}
+
+/** Aspect-locked resize anchored at the handle's opposite corner/edge. */
+function resizeAspect(start: CropRect, handle: number, docX: number, docY: number, aspect: number): CropRect {
+  switch (handle) {
+    case 0:
+      return aspectRectFromAnchor(start.x + start.w, start.y + start.h, docX, docY, aspect);
+    case 2:
+      return aspectRectFromAnchor(start.x, start.y + start.h, docX, docY, aspect);
+    case 4:
+      return aspectRectFromAnchor(start.x, start.y, docX, docY, aspect);
+    case 6:
+      return aspectRectFromAnchor(start.x + start.w, start.y, docX, docY, aspect);
+    case 1: {
+      // top edge: bottom edge + width fixed, height derived
+      const w = start.w;
+      const y1 = start.y + start.h;
+      return { x: start.x, y: y1 - w / aspect, w, h: w / aspect };
+    }
+    case 5: {
+      // bottom edge: top edge + width fixed
+      const w = start.w;
+      return { x: start.x, y: start.y, w, h: w / aspect };
+    }
+    case 3: {
+      // left edge: right edge + height fixed, width derived
+      const h = start.h;
+      const x1 = start.x + start.w;
+      return { x: x1 - h * aspect, y: start.y, w: h * aspect, h };
+    }
+    case 7: {
+      // right edge: left edge + height fixed
+      const h = start.h;
+      return { x: start.x, y: start.y, w: h * aspect, h };
+    }
+    default:
+      return { ...start };
+  }
+}
+
 function applyResize(start: CropRect, handle: number, docX: number, docY: number): CropRect {
   let x0 = start.x;
   let y0 = start.y;
@@ -131,11 +185,17 @@ export const cropController: ToolController = {
     }
     if (!rect) return;
     if (mode === 'draw') {
-      rect = normalized(drawStart.x, drawStart.y, e.docX, e.docY);
+      const aspect = useEditorStore.getState().toolOptions.crop.aspect;
+      rect = aspect && aspect > 0
+        ? aspectRectFromAnchor(drawStart.x, drawStart.y, e.docX, e.docY, aspect)
+        : normalized(drawStart.x, drawStart.y, e.docX, e.docY);
     } else if (mode === 'move' && rectAtStart) {
       rect = { ...rectAtStart, x: rectAtStart.x + (e.docX - moveStart.x), y: rectAtStart.y + (e.docY - moveStart.y) };
     } else if (mode === 'resize' && rectAtStart) {
-      rect = applyResize(rectAtStart, resizeHandle, e.docX, e.docY);
+      const aspect = useEditorStore.getState().toolOptions.crop.aspect;
+      rect = aspect && aspect > 0
+        ? resizeAspect(rectAtStart, resizeHandle, e.docX, e.docY, aspect)
+        : applyResize(rectAtStart, resizeHandle, e.docX, e.docY);
     }
     ctx.invalidate();
   },

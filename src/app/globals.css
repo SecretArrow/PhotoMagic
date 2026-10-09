@@ -213,3 +213,9 @@
     animation: none;
   }
 }
+
+/* Mobile: prevent pull-to-refresh / rubber-band while editing */
+html,
+body {
+  overscroll-behavior: none;
+}

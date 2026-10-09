@@ -165,11 +165,19 @@ function renderLayerBuffer(layer: Layer, doc: DocumentState): AnyCanvas | null {
 }
 
 function rasterBuffer(layer: RasterLayer, doc: DocumentState): AnyCanvas {
+  const enabledFilters = layer.filters ? layer.filters.filter((f) => f.enabled) : [];
+  // Fast path: pixels already cover the document 1:1 and need no filter/mask
+  // work — return the layer canvas itself instead of allocating a doc-sized
+  // buffer per composite. The renderer never mutates layer buffers, so this
+  // is safe; drawToBuffer only reads from it.
+  if (enabledFilters.length === 0 && !(layer.mask && layer.mask.enabled) && layer.x === 0 && layer.y === 0 && layer.canvas.width === doc.width && layer.canvas.height === doc.height) {
+    return layer.canvas;
+  }
   const out = makeCanvas(doc.width, doc.height);
   const ctx = ctx2d(out);
   let content: AnyCanvas = layer.canvas;
-  if (layer.filters && layer.filters.some((f) => f.enabled)) {
-    content = applySmartFilters(content, layer.filters.filter((f) => f.enabled));
+  if (enabledFilters.length > 0) {
+    content = applySmartFilters(content, enabledFilters);
   }
   ctx.drawImage(content as CanvasImageSource, layer.x, layer.y);
   if (layer.mask && layer.mask.enabled) {

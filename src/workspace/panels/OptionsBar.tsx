@@ -327,7 +327,34 @@ export default function OptionsBar() {
         </Bar>
       );
 
-    case 'crop':
+    case 'crop': {
+      const ASPECT_PRESETS: { value: string; label: string; ratio: number | null }[] = [
+        { value: 'free', label: t('options.aspectFree'), ratio: null },
+        { value: '1:1', label: '1:1', ratio: 1 },
+        { value: '4:3', label: '4:3', ratio: 4 / 3 },
+        { value: '3:4', label: '3:4', ratio: 3 / 4 },
+        { value: '16:9', label: '16:9', ratio: 16 / 9 },
+        { value: '9:16', label: '9:16', ratio: 9 / 16 },
+        { value: '3:2', label: '3:2', ratio: 3 / 2 },
+        { value: '2:3', label: '2:3', ratio: 2 / 3 },
+        { value: '5:4', label: '5:4', ratio: 5 / 4 },
+        { value: '4:5', label: '4:5', ratio: 4 / 5 },
+      ];
+      const aspect = toolOptions.crop.aspect;
+      const currentKey = aspect === null ? 'free' : (ASPECT_PRESETS.find((p) => p.ratio !== null && Math.abs(p.ratio - aspect) < 1e-6)?.value ?? 'free');
+      return (
+        <Bar>
+          <SelectRow
+            label={t('options.aspect')}
+            value={currentKey}
+            onValueChange={(v) => updateToolOptions('crop', { aspect: ASPECT_PRESETS.find((p) => p.value === v)?.ratio ?? null })}
+            items={ASPECT_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+          />
+          <span className="text-[11px] text-muted-foreground">{t(toolLabelKey(tool))}</span>
+        </Bar>
+      );
+    }
+
     case 'hand':
     case 'zoom':
     case 'pen':

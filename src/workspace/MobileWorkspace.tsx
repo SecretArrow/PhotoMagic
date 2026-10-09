@@ -6,6 +6,7 @@
  * full tools grid sheet. Panel components are shared with the desktop shell.
  */
 
+import { useRef } from 'react';
 import { useEditorStore } from '../state/editorStore';
 import type { UiState } from '../state/types';
 import CanvasStage from '../canvas/CanvasStage';
@@ -49,6 +50,16 @@ export default function MobileWorkspace() {
   const setTool = useEditorStore((s) => s.setTool);
   const setMobilePanel = useEditorStore((s) => s.setMobilePanel);
   const setMobileToolbarSheet = useEditorStore((s) => s.setMobileToolbarSheet);
+  const workRef = useRef<HTMLDivElement | null>(null);
+
+  /** zoom to exactly 100% keeping the viewport center anchored */
+  const zoomTo100 = (): void => {
+    const el = workRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const st = useEditorStore.getState();
+    st.zoomBy(1 / st.view.zoom, rect.width / 2, rect.height / 2);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -58,12 +69,12 @@ export default function MobileWorkspace() {
         style={{ paddingTop: 'var(--pf-safe-top)' }}
       >
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{doc.name}</span>
-        <Button variant="ghost" size="icon" className="size-8" aria-label={t('mobile.undo')} disabled={history.index < 0} onClick={() => useEditorStore.getState().undo()}>
+        <Button variant="ghost" size="icon" className="size-9" aria-label={t('mobile.undo')} disabled={history.index < 0} onClick={() => useEditorStore.getState().undo()}>
           <Undo2 className="size-4" />
         </Button>
         <Button
           variant="ghost"
-          size="icon" className="size-8"
+          size="icon" className="size-9"
           aria-label={t('mobile.redo')}
           disabled={history.index >= history.entries.length - 1}
           onClick={() => useEditorStore.getState().redo()}
@@ -72,44 +83,52 @@ export default function MobileWorkspace() {
         </Button>
         <Button
           variant="ghost"
-          size="icon" className="size-8"
+          size="icon" className="size-9"
           aria-label={t('mobile.panels')}
           onClick={() => setMobilePanel(mobilePanel ?? 'layers')}
         >
           <PanelBottom className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="size-8" aria-label={t('file.export')} onClick={() => useEditorStore.getState().setDialog('export')}>
+        <Button variant="ghost" size="icon" className="size-9" aria-label={t('file.export')} onClick={() => useEditorStore.getState().setDialog('export')}>
           <Download className="size-4" />
         </Button>
       </div>
 
       {/* canvas + floating zoom */}
-      <div className="pf-workspace relative min-h-0 flex-1 overflow-hidden">
+      <div ref={workRef} className="pf-workspace relative min-h-0 flex-1 overflow-hidden">
         <CanvasStage />
-        <div className="absolute bottom-3 right-3 z-10 flex flex-col gap-1.5">
+        <div className="absolute bottom-3 right-3 z-10 flex flex-col gap-2">
           <button
             type="button"
             aria-label={t('view.zoomIn')}
-            className="flex size-8 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-foreground backdrop-blur-sm active:bg-black/60"
+            className="flex size-11 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-foreground backdrop-blur-sm active:bg-black/60"
             onClick={() => useEditorStore.getState().zoomBy(1.25)}
           >
-            <Plus className="size-4" />
+            <Plus className="size-5" />
           </button>
           <button
             type="button"
             aria-label={t('view.zoomOut')}
-            className="flex size-8 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-foreground backdrop-blur-sm active:bg-black/60"
+            className="flex size-11 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-foreground backdrop-blur-sm active:bg-black/60"
             onClick={() => useEditorStore.getState().zoomBy(1 / 1.25)}
           >
-            <span className="text-base leading-none">−</span>
+            <span className="text-lg leading-none">−</span>
+          </button>
+          <button
+            type="button"
+            aria-label={t('view.actualSize')}
+            className="flex size-11 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-[10px] font-semibold text-foreground backdrop-blur-sm active:bg-black/60"
+            onClick={zoomTo100}
+          >
+            1:1
           </button>
           <button
             type="button"
             aria-label={t('view.fitScreen')}
-            className="flex size-8 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-foreground backdrop-blur-sm active:bg-black/60"
+            className="flex size-11 items-center justify-center rounded-full border border-[#3a3b42] bg-black/40 text-foreground backdrop-blur-sm active:bg-black/60"
             onClick={dispatchFit}
           >
-            <Maximize className="size-3.5" />
+            <Maximize className="size-4" />
           </button>
         </div>
       </div>
@@ -126,7 +145,7 @@ export default function MobileWorkspace() {
             <button
               key={id}
               type="button"
-              className="pf-tool-btn h-10 w-10 shrink-0"
+              className="pf-tool-btn h-11 w-11 shrink-0"
               data-active={tool === id || undefined}
               aria-label={name}
               onClick={() => setTool(id)}
@@ -138,7 +157,7 @@ export default function MobileWorkspace() {
         <Button
           variant="ghost"
           size="icon"
-          className="ml-1 h-10 w-10 shrink-0"
+          className="ml-1 h-11 w-11 shrink-0"
           aria-label={t('mobile.more')}
           onClick={() => setMobileToolbarSheet(true)}
         >

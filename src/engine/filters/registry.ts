@@ -11,6 +11,7 @@
 
 import type { FilterDef } from '../types';
 import { clamp255, luma601 } from '../color';
+import { removeBackground } from '../segmentation';
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -835,6 +836,23 @@ export const FILTERS: FilterDef[] = [
           data[i + c] = clamp255(255 - ((255 - base) * (255 - glow)) / 255);
         }
       }
+    },
+  },
+  {
+    // On-device background removal (border-seeded region growing + feather).
+    // Runs fully offline — pixels never leave the browser/worker.
+    op: 'remove-background',
+    labelKey: 'filter.removeBackground',
+    category: 'ai',
+    params: [
+      { key: 'tolerance', type: 'number', labelKey: 'filter.param.tolerance', min: 0, max: 255, step: 1, defaultValue: 32 },
+      { key: 'feather', type: 'number', labelKey: 'filter.param.feather', min: 0, max: 10, step: 0.5, defaultValue: 1 },
+    ],
+    apply(data, width, height, params) {
+      removeBackground(data, width, height, {
+        tolerance: num(params, 'tolerance', 32),
+        feather: num(params, 'feather', 1),
+      });
     },
   },
 ];

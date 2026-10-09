@@ -300,7 +300,7 @@ export default function MenuBar({ openNumericPrompt }: MenuBarProps) {
       <MenubarMenu>
         <MenubarTrigger className="px-2 text-xs">{t('menu.filter')}</MenubarTrigger>
         <MenubarContent className="max-h-[60vh] overflow-y-auto">
-          {(['blur', 'sharpen', 'noise', 'stylize', 'distort', 'light', 'artistic'] as const).map((cat) => {
+          {(['ai', 'blur', 'sharpen', 'noise', 'stylize', 'distort', 'light', 'artistic'] as const).map((cat) => {
             const group = filters.filter((f) => f.category === cat);
             if (group.length === 0) return null;
             const labelKey = `filter.category.${cat}` as TranslationKey;

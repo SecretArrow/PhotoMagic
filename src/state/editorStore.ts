@@ -112,6 +112,7 @@ export const defaultToolOptions: ToolOptions = {
   },
   move: { autoSelect: false },
   eyedropper: { sampleMerged: true, radius: 1 },
+  crop: { aspect: null },
 };
 
 const defaultSettings: EditorSettings = {
@@ -796,6 +797,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       },
     };
     get().commitEntry(entry);
+    // The caller (filter dialog, retouch commit, …) already wrote the new
+    // pixels into the layer canvas — bump the revision so the viewport
+    // composite rebuilds immediately. Without this the display keeps
+    // showing the pre-edit composite until some other revision bump.
+    useEditorStore.setState((st) => ({ revision: st.revision + 1 }));
   },
 
   /* ------------------------- selection ------------------------- */

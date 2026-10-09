@@ -15,7 +15,7 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 | BMP                      | ✅ Supported        | Standard uncompressed variants via browser decoder.                          |
 | SVG                      | ⚠️ Partial          | **Rasterized on import** (sanitized by re-drawing). Vector nodes are not editable after import. |
 | TIFF                     | ❌ Not supported    | Browsers ship no TIFF decoder; needs a custom decoder (planned — see below).  |
-| PSD / PSB (Photoshop)    | ❌ Not supported    | Layered parsing is a large standalone effort (planned).                       |
+| PSD / PSB (Photoshop)    | ❌ Not supported    | Layered **import** parsing is a large standalone effort (planned). **Export** to PSD is supported — see below. |
 | PDF                      | ❌ Not supported    | Out of scope for an image editor v1.                                          |
 | HEIC / HEIF              | ❌ Not supported    | Licensing + platform decoder variance; not bundled.                           |
 | AVIF                     | ❌ Not supported    | Deliberately not wired in this build even where platform decoders exist.      |
@@ -31,6 +31,7 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 | PNG    | ✅ Supported | Full alpha; recommended for lossless output.              |
 | JPEG   | ✅ Supported | Quality slider; alpha flattened onto background.          |
 | WebP   | ✅ Supported | Lossy/lossless per browser encoder support.               |
+| PSD    | ✅ Supported | RGB 8-bit, layers with blend modes/opacity/visibility/names; text/shape layers rasterized; masks & smart filters are not baked into layer pixels; 100% scale; opens in Photoshop/GIMP/Photopea. |
 | `.pfs` | ✅ Supported | Native project (see below).                               |
 | TIFF   | ❌ Not supported | Same decoder rationale as import.                     |
 | PDF    | ❌ Not supported | —                                                     |

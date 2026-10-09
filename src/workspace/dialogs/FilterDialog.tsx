@@ -33,7 +33,8 @@ import type { WorkspaceDialogProps } from './NewDocumentDialog';
 
 const PREVIEW_MAX = 512;
 
-const CATEGORIES: { id: FilterDef['category']; labelKey: 'filter.category.blur' | 'filter.category.sharpen' | 'filter.category.noise' | 'filter.category.stylize' | 'filter.category.distort' | 'filter.category.light' | 'filter.category.artistic' }[] = [
+const CATEGORIES: { id: FilterDef['category']; labelKey: 'filter.category.blur' | 'filter.category.sharpen' | 'filter.category.noise' | 'filter.category.stylize' | 'filter.category.distort' | 'filter.category.light' | 'filter.category.artistic' | 'filter.category.ai' }[] = [
+  { id: 'ai', labelKey: 'filter.category.ai' },
   { id: 'blur', labelKey: 'filter.category.blur' },
   { id: 'sharpen', labelKey: 'filter.category.sharpen' },
   { id: 'noise', labelKey: 'filter.category.noise' },

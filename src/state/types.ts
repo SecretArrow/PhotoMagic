@@ -78,6 +78,11 @@ export interface EyedropperOptions {
   radius: number;
 }
 
+export interface CropOptions {
+  /** locked aspect ratio (w/h); null = free crop */
+  aspect: number | null;
+}
+
 export interface ToolOptions {
   brush: BrushOptions;
   pencil: { size: number; opacity: number };
@@ -97,6 +102,7 @@ export interface ToolOptions {
   shape: ShapeOptions;
   move: MoveOptions;
   eyedropper: EyedropperOptions;
+  crop: CropOptions;
 }
 
 export interface EditorSettings {

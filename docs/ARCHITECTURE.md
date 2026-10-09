@@ -8,12 +8,12 @@ Audience: contributors. This document describes the module layout, the data flow
 
 | Module            | Responsibility                                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------------------------- |
-| `src/engine/`     | Pure document model + pixel engine. No React, no store imports. Types, document ops, selections, color, adjustments, filters, blend modes, transforms, compositing renderer. |
+| `src/engine/`     | Pure document model + pixel engine. No React, no store imports. Types, document ops, selections, color, adjustments, filters, blend modes, transforms, compositing renderer, on-device segmentation (`segmentation.ts`). |
 | `src/state/`      | Zustand editor store. Owns documents, layers, selection, view, tool state, colors, history, UI state and settings. All mutations flow through actions that create history entries. |
 | `src/canvas/`     | Pointer/event contract between the workspace viewport and tool implementations (hit testing, coordinate spaces, gesture normalization). |
 | `src/tools/`      | Tool implementations (brush, marquee, wand, text, shapes, …). They read tool options from the store and mutate documents through store actions. |
 | `src/workspace/`  | Editor shell: panels (layers, history, adjustments, color, navigator, properties), options bar, canvas viewport, dialogs. |
-| `src/formats/`    | Import/export adapters for raster formats (PNG, JPEG, WebP, GIF first frame, BMP, SVG rasterized) with honest partial-support messaging. |
+| `src/formats/`    | Import/export adapters for raster formats (PNG, JPEG, WebP, GIF first frame, BMP, SVG rasterized) plus a layered PSD v1 writer (`psd.ts`), with honest partial-support messaging. |
 | `src/documents/`  | Native `.pfs` project serializer — encode, validate, decode (see §6).                                  |
 | `src/storage/`    | Persistence: IndexedDB wrapper, `AutosaveManager`, crash-recovery snapshots + session crash flag.       |
 | `src/workers/`    | Web Worker entry that executes the filter/adjustment/histogram protocol (see §5).                       |
