@@ -323,3 +323,13 @@ export async function loadProjectFromFile(file: File): Promise<DocumentState> {
   const text = await file.text();
   return loadProject(text);
 }
+
+/**
+ * Serializes a document to a .pfs JSON string (autosave / recovery / share).
+ * Convenience wrapper around saveProject() for callers that need text
+ * instead of a Blob — same format, same validation-free encode path.
+ */
+export async function saveProjectToString(doc: DocumentState, appVersion: string): Promise<string> {
+  const blob = await saveProject(doc, appVersion);
+  return await blob.text();
+}

@@ -467,6 +467,376 @@ export const FILTERS: FilterDef[] = [
       }
     },
   },
+
+  /* ---------------------------------------------------------------- */
+  /* extended set — bokeh / edge-aware / distort / light (task 3-b)     */
+  /* ---------------------------------------------------------------- */
+  {
+    op: 'radial-blur',
+    labelKey: 'filter.radialBlur',
+    category: 'blur',
+    params: [{ key: 'amount', type: 'number', labelKey: 'filter.param.amount', min: 1, max: 50, step: 1, defaultValue: 10 }],
+    apply(data, width, height, params) {
+      // Zoom-style radial blur: each pixel averages samples pulled toward the
+      // image center along its ray. Deterministic (fixed sample ladder).
+      const amount = num(params, 'amount', 10);
+      const src = new Uint8ClampedArray(data);
+      const cx = width / 2;
+      const cy = height / 2;
+      const steps = Math.max(2, Math.round(amount));
+      const maxScale = amount / 100; // strongest sample sits this fraction closer to center
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          let r = 0;
+          let g = 0;
+          let b = 0;
+          let a = 0;
+          for (let s = 0; s < steps; s++) {
+            const t = s / (steps - 1);
+            const scale = 1 - maxScale * t;
+            const sx = Math.min(width - 1, Math.max(0, Math.round(cx + dx * scale)));
+            const sy = Math.min(height - 1, Math.max(0, Math.round(cy + dy * scale)));
+            const so = (sy * width + sx) * 4;
+            r += src[so];
+            g += src[so + 1];
+            b += src[so + 2];
+            a += src[so + 3];
+          }
+          const o = (y * width + x) * 4;
+          data[o] = r / steps;
+          data[o + 1] = g / steps;
+          data[o + 2] = b / steps;
+          data[o + 3] = a / steps;
+        }
+      }
+    },
+  },
+  {
+    op: 'lens-blur',
+    labelKey: 'filter.lensBlur',
+    category: 'blur',
+    params: [{ key: 'radius', type: 'number', labelKey: 'filter.param.radius', min: 1, max: 30, step: 1, defaultValue: 8 }],
+    apply(data, width, height, params) {
+      // Approximation of a disc bokeh kernel: 4 stacked box passes produce a
+      // soft, wider-than-gaussian falloff. Honest label: not a true disc.
+      boxBlurRGBA(data, width, height, num(params, 'radius', 8), 4);
+    },
+  },
+  {
+    op: 'surface-blur',
+    labelKey: 'filter.surfaceBlur',
+    category: 'blur',
+    params: [
+      { key: 'radius', type: 'number', labelKey: 'filter.param.radius', min: 1, max: 20, step: 1, defaultValue: 5 },
+      { key: 'threshold', type: 'number', labelKey: 'filter.param.threshold', min: 1, max: 100, step: 1, defaultValue: 20 },
+    ],
+    apply(data, width, height, params) {
+      // Edge-preserving smoothing: only neighbors whose average per-channel
+      // color distance from the center is below the threshold are averaged.
+      const r = Math.max(1, Math.round(num(params, 'radius', 5)));
+      const threshold = (num(params, 'threshold', 20) / 100) * 255; // 1..100 → 0..255 range
+      const src = new Uint8ClampedArray(data);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const o = (y * width + x) * 4;
+          const cr = src[o];
+          const cg = src[o + 1];
+          const cb = src[o + 2];
+          let sr = 0;
+          let sg = 0;
+          let sb = 0;
+          let wsum = 0;
+          for (let dy = -r; dy <= r; dy++) {
+            const sy = Math.min(height - 1, Math.max(0, y + dy));
+            for (let dx = -r; dx <= r; dx++) {
+              const sx = Math.min(width - 1, Math.max(0, x + dx));
+              const so = (sy * width + sx) * 4;
+              const dist = (Math.abs(src[so] - cr) + Math.abs(src[so + 1] - cg) + Math.abs(src[so + 2] - cb)) / 3;
+              if (dist < threshold) {
+                sr += src[so];
+                sg += src[so + 1];
+                sb += src[so + 2];
+                wsum++;
+              }
+            }
+          }
+          if (wsum > 0) {
+            data[o] = sr / wsum;
+            data[o + 1] = sg / wsum;
+            data[o + 2] = sb / wsum;
+          }
+        }
+      }
+    },
+  },
+  {
+    op: 'high-pass',
+    labelKey: 'filter.highPass',
+    category: 'sharpen',
+    params: [{ key: 'radius', type: 'number', labelKey: 'filter.param.radius', min: 1, max: 50, step: 1, defaultValue: 5 }],
+    apply(data, width, height, params) {
+      // original − blurred + 128 → gray midtone output with edges highlighted
+      const blurred = new Uint8ClampedArray(data);
+      boxBlurRGBA(blurred, width, height, num(params, 'radius', 5), 2);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = clamp255(data[i] - blurred[i] + 128);
+        data[i + 1] = clamp255(data[i + 1] - blurred[i + 1] + 128);
+        data[i + 2] = clamp255(data[i + 2] - blurred[i + 2] + 128);
+      }
+    },
+  },
+  {
+    op: 'halftone',
+    labelKey: 'filter.halftone',
+    category: 'artistic',
+    params: [
+      { key: 'size', type: 'number', labelKey: 'filter.param.size', min: 2, max: 24, step: 1, defaultValue: 6 },
+      { key: 'angle', type: 'number', labelKey: 'filter.param.angle', min: -90, max: 90, step: 1, defaultValue: 45 },
+    ],
+    apply(data, width, height, params) {
+      // Dot-screen approximation: re-renders the image as black ink dots
+      // (radius ∝ cell darkness) on white, on a grid rotated by `angle`.
+      const size = Math.max(2, Math.round(num(params, 'size', 6)));
+      const angle = (num(params, 'angle', 45) * Math.PI) / 180;
+      const src = new Uint8ClampedArray(data);
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const cx = width / 2;
+      const cy = height / 2;
+      const half = size / 2;
+      data.fill(255); // fresh white paper (RGB + alpha)
+      const grid = Math.ceil(Math.hypot(width, height) / size / 2) + 1;
+      for (let j = -grid; j <= grid; j++) {
+        for (let i = -grid; i <= grid; i++) {
+          const px = cx + i * size * cosA - j * size * sinA;
+          const py = cy + i * size * sinA + j * size * cosA;
+          if (px < -size || py < -size || px > width + size || py > height + size) continue;
+          // average source luminance inside this grid cell
+          let sum = 0;
+          let count = 0;
+          for (let oy = -half; oy < half; oy++) {
+            const sy = Math.min(height - 1, Math.max(0, Math.round(py + oy)));
+            for (let ox = -half; ox < half; ox++) {
+              const sx = Math.min(width - 1, Math.max(0, Math.round(px + ox)));
+              const so = (sy * width + sx) * 4;
+              sum += luma601(src[so], src[so + 1], src[so + 2]);
+              count++;
+            }
+          }
+          const darkness = 1 - sum / (count * 255); // 0..1
+          const radius = darkness * half * 1.18; // slight overlap → denser screens
+          if (radius < 0.5) continue;
+          const x0 = Math.max(0, Math.floor(px - radius));
+          const x1 = Math.min(width - 1, Math.ceil(px + radius));
+          const y0 = Math.max(0, Math.floor(py - radius));
+          const y1 = Math.min(height - 1, Math.ceil(py + radius));
+          for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+              const ddx = x - px;
+              const ddy = y - py;
+              if (ddx * ddx + ddy * ddy <= radius * radius) {
+                const o = (y * width + x) * 4;
+                data[o] = 0;
+                data[o + 1] = 0;
+                data[o + 2] = 0;
+              }
+            }
+          }
+        }
+      }
+    },
+  },
+  {
+    op: 'wave',
+    labelKey: 'filter.wave',
+    category: 'distort',
+    params: [
+      { key: 'amplitude', type: 'number', labelKey: 'filter.param.amplitude', min: 1, max: 50, step: 1, defaultValue: 8 },
+      { key: 'wavelength', type: 'number', labelKey: 'filter.param.wavelength', min: 4, max: 200, step: 1, defaultValue: 40 },
+      {
+        key: 'direction',
+        type: 'select',
+        labelKey: 'filter.param.direction',
+        defaultValue: 'horizontal',
+        options: [
+          { value: 'horizontal', labelKey: 'filter.param.directionHorizontal' },
+          { value: 'vertical', labelKey: 'filter.param.directionVertical' },
+        ],
+      },
+    ],
+    apply(data, width, height, params) {
+      // Sin-based displacement: 'horizontal' shifts rows along x by sin(y),
+      // 'vertical' shifts columns along y by sin(x).
+      const amp = num(params, 'amplitude', 8);
+      const wl = Math.max(2, num(params, 'wavelength', 40));
+      const vertical = params.direction === 'vertical';
+      const src = new Uint8ClampedArray(data);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let sx = x;
+          let sy = y;
+          if (vertical) {
+            sy = Math.round(y + amp * Math.sin((x / wl) * Math.PI * 2));
+          } else {
+            sx = Math.round(x + amp * Math.sin((y / wl) * Math.PI * 2));
+          }
+          sx = Math.min(width - 1, Math.max(0, sx));
+          sy = Math.min(height - 1, Math.max(0, sy));
+          const o = (y * width + x) * 4;
+          const so = (sy * width + sx) * 4;
+          data[o] = src[so];
+          data[o + 1] = src[so + 1];
+          data[o + 2] = src[so + 2];
+          data[o + 3] = src[so + 3];
+        }
+      }
+    },
+  },
+  {
+    op: 'twirl',
+    labelKey: 'filter.twirl',
+    category: 'distort',
+    params: [
+      { key: 'angle', type: 'number', labelKey: 'filter.param.angle', min: -360, max: 360, step: 1, defaultValue: 90 },
+      { key: 'radius', type: 'number', labelKey: 'filter.param.radius', min: 10, max: 100, step: 1, defaultValue: 50 },
+    ],
+    apply(data, width, height, params) {
+      // Rotates pixels around the center; rotation strength falls off
+      // quadratically with distance and stops at `radius` (% of min dimension).
+      const maxAngle = (num(params, 'angle', 90) * Math.PI) / 180;
+      const radius = (num(params, 'radius', 50) / 100) * Math.min(width, height);
+      const r = Math.max(1, radius);
+      const src = new Uint8ClampedArray(data);
+      const cx = width / 2;
+      const cy = height / 2;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          const d = Math.hypot(dx, dy);
+          let sx = x;
+          let sy = y;
+          if (d > 0 && d < r) {
+            const t = 1 - d / r;
+            const a = maxAngle * t * t;
+            const cosA = Math.cos(a);
+            const sinA = Math.sin(a);
+            sx = Math.min(width - 1, Math.max(0, Math.round(cx + dx * cosA - dy * sinA)));
+            sy = Math.min(height - 1, Math.max(0, Math.round(cy + dx * sinA + dy * cosA)));
+          }
+          const o = (y * width + x) * 4;
+          const so = (sy * width + sx) * 4;
+          data[o] = src[so];
+          data[o + 1] = src[so + 1];
+          data[o + 2] = src[so + 2];
+          data[o + 3] = src[so + 3];
+        }
+      }
+    },
+  },
+  {
+    op: 'spherize',
+    labelKey: 'filter.spherize',
+    category: 'distort',
+    params: [{ key: 'amount', type: 'number', labelKey: 'filter.param.amount', min: -100, max: 100, step: 1, defaultValue: 50 }],
+    apply(data, width, height, params) {
+      // Spherical bulge (+) / pinch (−): sample radius follows d^(1+amount),
+      // so +amount pulls samples toward the center (magnify) and −amount
+      // pushes them outward (pinch). amount 0 = identity.
+      const amount = num(params, 'amount', 50) / 100;
+      const src = new Uint8ClampedArray(data);
+      const cx = width / 2;
+      const cy = height / 2;
+      const maxD = Math.hypot(cx, cy);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          const d = Math.hypot(dx, dy) / maxD; // normalized 0..1 (1 at corners)
+          let sx = x;
+          let sy = y;
+          if (d > 0 && d < 1) {
+            const nd = Math.pow(d, 1 + amount) * maxD;
+            const scale = nd / (d * maxD);
+            sx = Math.min(width - 1, Math.max(0, Math.round(cx + dx * scale)));
+            sy = Math.min(height - 1, Math.max(0, Math.round(cy + dy * scale)));
+          }
+          const o = (y * width + x) * 4;
+          const so = (sy * width + sx) * 4;
+          data[o] = src[so];
+          data[o + 1] = src[so + 1];
+          data[o + 2] = src[so + 2];
+          data[o + 3] = src[so + 3];
+        }
+      }
+    },
+  },
+  {
+    op: 'ripple',
+    labelKey: 'filter.ripple',
+    category: 'distort',
+    params: [
+      { key: 'amplitude', type: 'number', labelKey: 'filter.param.amplitude', min: 1, max: 30, step: 1, defaultValue: 6 },
+      { key: 'wavelength', type: 'number', labelKey: 'filter.param.wavelength', min: 4, max: 120, step: 1, defaultValue: 30 },
+    ],
+    apply(data, width, height, params) {
+      // Radial sine displacement emanating from the image center.
+      const amp = num(params, 'amplitude', 6);
+      const wl = Math.max(2, num(params, 'wavelength', 30));
+      const src = new Uint8ClampedArray(data);
+      const cx = width / 2;
+      const cy = height / 2;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          const d = Math.hypot(dx, dy);
+          // sin(0) = 0 at the center, so scale is safe to guard at d = 0
+          const scale = d > 0 ? (d + amp * Math.sin((d / wl) * Math.PI * 2)) / d : 1;
+          const sx = Math.min(width - 1, Math.max(0, Math.round(cx + dx * scale)));
+          const sy = Math.min(height - 1, Math.max(0, Math.round(cy + dy * scale)));
+          const o = (y * width + x) * 4;
+          const so = (sy * width + sx) * 4;
+          data[o] = src[so];
+          data[o + 1] = src[so + 1];
+          data[o + 2] = src[so + 2];
+          data[o + 3] = src[so + 3];
+        }
+      }
+    },
+  },
+  {
+    op: 'bloom',
+    labelKey: 'filter.bloom',
+    category: 'light',
+    params: [
+      { key: 'radius', type: 'number', labelKey: 'filter.param.radius', min: 1, max: 50, step: 1, defaultValue: 12 },
+      { key: 'intensity', type: 'number', labelKey: 'filter.param.intensity', min: 0, max: 100, step: 1, defaultValue: 40 },
+    ],
+    apply(data, width, height, params) {
+      // Bright-pass copy → blur → screen-blend back for a soft glow.
+      const radius = num(params, 'radius', 12);
+      const intensity = num(params, 'intensity', 40) / 100;
+      const bright = new Uint8ClampedArray(data);
+      for (let i = 0; i < bright.length; i += 4) {
+        const y = luma601(bright[i], bright[i + 1], bright[i + 2]);
+        const k = y > 128 ? (y - 128) / 127 : 0; // soft threshold above mid gray
+        bright[i] = clamp255(bright[i] * k);
+        bright[i + 1] = clamp255(bright[i + 1] * k);
+        bright[i + 2] = clamp255(bright[i + 2] * k);
+      }
+      boxBlurRGBA(bright, width, height, radius, 2);
+      for (let i = 0; i < data.length; i += 4) {
+        for (let c = 0; c < 3; c++) {
+          const base = data[i + c];
+          const glow = bright[i + c] * intensity;
+          data[i + c] = clamp255(255 - ((255 - base) * (255 - glow)) / 255);
+        }
+      }
+    },
+  },
 ];
 
 const registry = new Map<string, FilterDef>(FILTERS.map((f) => [f.op, f]));

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import PwaRegister from "@/components/editor/PwaRegister";
 
 export const metadata: Metadata = {
   title: "PixelForge Studio — Free professional photo editor",
@@ -40,6 +41,7 @@ export default function RootLayout({
       <body className="antialiased bg-background text-foreground overflow-hidden overscroll-none">
         {children}
         <Toaster />
+        <PwaRegister />
       </body>
     </html>
   );

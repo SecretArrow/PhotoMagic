@@ -56,6 +56,17 @@ export interface ToolController {
   onKeyDown?(key: string, ctx: ToolContext): boolean;
   /** called when tool is deactivated (commit pending state) */
   deactivate?(): void;
+  /**
+   * Optional tool-drawn overlay (crop rects, marquee previews, pen anchors…)
+   * Called in screen space after the stage draws document overlays.
+   * Return true when something was drawn (stage invalidates automatically
+   * during gestures anyway).
+   */
+  drawOverlay?(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    view: ViewState,
+    viewport: { w: number; h: number },
+  ): void;
 }
 
 export interface ViewportOverlay {
