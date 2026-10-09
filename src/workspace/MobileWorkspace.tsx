@@ -12,7 +12,7 @@ import CanvasStage from '../canvas/CanvasStage';
 import { useI18n } from '../i18n';
 import type { TranslationKey } from '../i18n/dictionaries';
 import { dispatchFit } from './commands';
-import { MOBILE_TOOL_ORDER, TOOL_ORDER, toolIcon } from './toolMeta';
+import { MOBILE_TOOL_ORDER, TOOL_ORDER, toolIcon, toolLabelKey } from './toolMeta';
 import LayersPanel from './panels/LayersPanel';
 import HistoryPanel from './panels/HistoryPanel';
 import AdjustmentsPanel from './panels/AdjustmentsPanel';
@@ -121,7 +121,7 @@ export default function MobileWorkspace() {
       >
         {MOBILE_TOOL_ORDER.map((id) => {
           const Icon = toolIcon(id);
-          const name = t(`tools.${id}` as TranslationKey);
+          const name = t(toolLabelKey(id));
           return (
             <button
               key={id}
@@ -182,7 +182,7 @@ export default function MobileWorkspace() {
           <div className="pf-scroll grid max-h-full grid-cols-4 gap-1.5 overflow-y-auto pb-4">
             {TOOL_ORDER.map((id) => {
               const Icon = toolIcon(id);
-              const name = t(`tools.${id}` as TranslationKey);
+              const name = t(toolLabelKey(id));
               return (
                 <button
                   key={id}

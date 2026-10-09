@@ -41,14 +41,15 @@ export function composeDocument(doc: DocumentState, opts: ComposeOptions = {}): 
     target.height = doc.height;
   }
   const ctx = ctx2d(target);
-  ctx.clearRect(0, 0, doc.width, doc.height);
   const base = composeLayers(ctx, doc.layers, doc, opts.selectionMask ?? null);
+  // blit the composed buffer into the target (checker optionally underneath)
   if (opts.checker) {
-    // rebuild with checker under composite: draw checker first, then base over it
     ctx.clearRect(0, 0, doc.width, doc.height);
     paintChecker(ctx, 0, 0, doc.width, doc.height);
-    ctx.drawImage(base as CanvasImageSource, 0, 0);
+  } else {
+    ctx.clearRect(0, 0, doc.width, doc.height);
   }
+  ctx.drawImage(base as CanvasImageSource, 0, 0);
   return target;
 }
 
@@ -294,6 +295,19 @@ export function renderLayerIsolated(layer: Layer, doc: DocumentState): AnyCanvas
   return out;
 }
 
+
+/** Converts any canvas to a PNG data URL (OffscreenCanvas lacks toDataURL). */
+function canvasToDataUrl(canvas: AnyCanvas): string {
+  if (typeof (canvas as HTMLCanvasElement).toDataURL === 'function') {
+    return (canvas as HTMLCanvasElement).toDataURL('image/png');
+  }
+  const host = document.createElement('canvas');
+  host.width = canvas.width;
+  host.height = canvas.height;
+  host.getContext('2d')?.drawImage(canvas as CanvasImageSource, 0, 0);
+  return host.toDataURL('image/png');
+}
+
 /** Small thumbnail for the layers panel. Cached per (layerId + revision). */
 const thumbCache = new Map<string, { rev: number; url: string }>();
 
@@ -310,7 +324,7 @@ export function layerThumbnail(layer: Layer, doc: DocumentState, revision: numbe
   ctx.drawImage(isolated as CanvasImageSource, (size - w) / 2, (size - h) / 2, w, h);
   let url = '';
   try {
-    url = (c as HTMLCanvasElement).toDataURL('image/png');
+    url = canvasToDataUrl(c);
   } catch {
     url = '';
   }
@@ -338,7 +352,7 @@ export function maskThumbnail(layer: Layer, revision: number, size = 44): string
   ctx.drawImage(m as CanvasImageSource, (size - m.width * scale) / 2, (size - m.height * scale) / 2, m.width * scale, m.height * scale);
   let url = '';
   try {
-    url = (c as HTMLCanvasElement).toDataURL('image/png');
+    url = canvasToDataUrl(c);
   } catch {
     url = '';
   }

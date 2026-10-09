@@ -12,6 +12,7 @@ import { useEditorStore } from '../../state/editorStore';
 import type { TextContent, ToolId } from '../../engine/types';
 import type { ShapeOptions } from '../../state/types';
 import { useI18n } from '../../i18n';
+import { toolLabelKey } from '../toolMeta';
 import { ColorPickerButton, NumInput, SelectRow, SliderRow, SwitchRow } from './controls';
 
 const FONT_LIST: { value: string; label: string }[] = [
@@ -332,7 +333,7 @@ export default function OptionsBar() {
     case 'pen':
       return (
         <Bar>
-          <span className="text-[11px] text-muted-foreground">{t(`tools.${tool}` as 'tools.crop')}</span>
+          <span className="text-[11px] text-muted-foreground">{t(toolLabelKey(tool))}</span>
         </Bar>
       );
 

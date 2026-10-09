@@ -11,7 +11,7 @@ import { TOOL_SHORTCUTS } from '../../shortcuts';
 import { formatShortcut } from '../../shortcuts';
 import { useI18n } from '../../i18n';
 import type { TranslationKey } from '../../i18n/dictionaries';
-import { TOOL_ORDER, toolIcon } from '../toolMeta';
+import { TOOL_ORDER, toolIcon, toolLabelKey } from '../toolMeta';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HsvPicker } from './HsvPicker';
@@ -42,7 +42,7 @@ export default function ToolRail() {
     <div className="pf-scroll flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-[#2c2d33] bg-[#1b1c20] py-1.5">
       {TOOL_ORDER.map((id) => {
         const Icon = toolIcon(id);
-        const name = t(`tools.${id}` as TranslationKey);
+        const name = t(toolLabelKey(id));
         const expr = SHORTCUT_BY_TOOL[id];
         return (
           <Tooltip key={id}>

@@ -29,6 +29,7 @@ import {
 } from '../storage/recovery';
 import { loadProject } from '../documents/project';
 import { I18nProvider, useI18n } from '../i18n';
+import { composeDocument } from '../engine/render';
 import { toast } from '../hooks/use-toast';
 import { useIsDesktop } from './useIsDesktop';
 import DesktopWorkspace from './DesktopWorkspace';
@@ -48,6 +49,11 @@ export default function EditorRoot() {
 
 function Workspace() {
   const isDesktop = useIsDesktop();
+  useEffect(() => {
+    // dev debugging handle (harmless in prod)
+    (window as unknown as Record<string, unknown>).__pfStore = useEditorStore;
+    (window as unknown as Record<string, unknown>).__pfCompose = composeDocument;
+  }, []);
   const { t } = useI18n();
   const [recoveryJson, setRecoveryJson] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);

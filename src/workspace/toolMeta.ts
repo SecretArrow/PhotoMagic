@@ -8,6 +8,7 @@
 'use client';
 
 import type { ToolId } from '../engine/types';
+import type { TranslationKey } from '../i18n/dictionaries';
 import type { ToolOptions } from '../state/types';
 import {
   Blend,
@@ -158,4 +159,41 @@ export function toolOptionsKey(tool: ToolId): keyof ToolOptions | null {
     default:
       return null;
   }
+}
+
+/**
+ * Maps a ToolId to its i18n dictionary key suffix.
+ * Dictionary keys use camelCase ('tools.marqueeRect') while ToolIds are
+ * kebab-case ('marquee-rect'), so an explicit map keeps them in sync.
+ */
+const TOOL_KEY_MAP: Record<ToolId, TranslationKey> = {
+  move: 'tools.move',
+  'marquee-rect': 'tools.marqueeRect',
+  'marquee-ellipse': 'tools.marqueeEllipse',
+  lasso: 'tools.lasso',
+  'polygonal-lasso': 'tools.polygonalLasso',
+  'magic-wand': 'tools.wand',
+  crop: 'tools.crop',
+  eyedropper: 'tools.eyedropper',
+  brush: 'tools.brush',
+  pencil: 'tools.pencil',
+  eraser: 'tools.eraser',
+  airbrush: 'tools.airbrush',
+  smudge: 'tools.smudge',
+  'blur-brush': 'tools.blurBrush',
+  'sharpen-brush': 'tools.sharpenBrush',
+  dodge: 'tools.dodge',
+  burn: 'tools.burn',
+  'clone-stamp': 'tools.clone',
+  fill: 'tools.fill',
+  gradient: 'tools.gradient',
+  text: 'tools.text',
+  shape: 'tools.shape',
+  pen: 'tools.pen',
+  hand: 'tools.hand',
+  zoom: 'tools.zoom',
+};
+
+export function toolLabelKey(id: ToolId): TranslationKey {
+  return TOOL_KEY_MAP[id] ?? 'tools.move';
 }

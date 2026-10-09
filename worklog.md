@@ -105,3 +105,20 @@ Work Log:
 
 Stage Summary:
 - All 25 ToolIds wired via getToolController; pixel tools use diff-region commitPixelEdit history
+
+---
+Task ID: 5
+Agent: main (Super Z)
+Task: Integration, bug fixes, browser verification
+
+Work Log:
+- Fixed composeDocument bug: composed buffer was never blitted into target on the non-checker path (root cause of transparent canvas)
+- Fixed layer/mask thumbnails: OffscreenCanvas lacks toDataURL — added canvasToDataUrl host-canvas conversion
+- Fixed tool label i18n mapping (ToolId kebab-case vs dictionary camelCase) via toolLabelKey map in toolMeta.ts; applied in ToolRail, OptionsBar, MobileWorkspace
+- Fixed ESLint errors: useMemo inline fn, setState-in-effect patterns (useIsDesktop, NavigatorPanel, NumericPromptDialog)
+- Fixed project.test.ts typing (document deletion cast)
+- Browser verification (agent-browser): desktop render, brush stroke (7109 px, history entry), undo/redo, rect selection with marching ants, text layer creation, filter gallery end-to-end (gaussian blur through worker: pixels changed + history entry), export dialog, filter dialog honest no-raster-layer notice, mobile viewport layout (390x844), crash-recovery dialog after reload, thumbnails, status bar, autosave "Saved" indicator
+
+Stage Summary:
+- 71/71 unit tests pass, tsc clean, eslint 0 errors
+- Verified screenshots in /home/z/my-project/download/verify-*.png
