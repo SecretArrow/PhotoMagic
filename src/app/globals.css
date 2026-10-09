@@ -79,24 +79,24 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: oklch(0.16 0.005 260);
+  --foreground: oklch(0.93 0.003 260);
+  --card: oklch(0.205 0.005 260);
+  --card-foreground: oklch(0.93 0.003 260);
+  --popover: oklch(0.22 0.005 260);
+  --popover-foreground: oklch(0.93 0.003 260);
+  --primary: oklch(0.72 0.13 162);
+  --primary-foreground: oklch(0.16 0.005 260);
+  --secondary: oklch(0.26 0.006 260);
+  --secondary-foreground: oklch(0.93 0.003 260);
+  --muted: oklch(0.26 0.006 260);
+  --muted-foreground: oklch(0.62 0.01 260);
+  --accent: oklch(0.28 0.008 260);
+  --accent-foreground: oklch(0.95 0.003 260);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.72 0.13 162);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -118,5 +118,98 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* PixelForge Studio editor styles                                     */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --pf-bg-workspace: #232429;
+  --pf-panel: #1b1c20;
+  --pf-panel-border: #2c2d33;
+  --pf-accent: #58c08a;
+  --pf-safe-top: env(safe-area-inset-top, 0px);
+  --pf-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --pf-safe-left: env(safe-area-inset-left, 0px);
+  --pf-safe-right: env(safe-area-inset-right, 0px);
+}
+
+.pf-no-select {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
+
+.pf-workspace {
+  background-color: var(--pf-bg-workspace);
+}
+
+/* thin dark scrollbars for panels */
+.pf-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3b42 transparent;
+}
+.pf-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.pf-scroll::-webkit-scrollbar-thumb {
+  background: #3a3b42;
+  border-radius: 4px;
+}
+.pf-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* marching ants animation for selection overlays */
+@keyframes pf-ants {
+  to {
+    stroke-dashoffset: -8;
+  }
+}
+.pf-ants {
+  stroke-dasharray: 4 4;
+  animation: pf-ants 0.5s linear infinite;
+}
+
+/* canvas elements shouldn't capture native gestures */
+.pf-canvas {
+  touch-action: none;
+  outline: none;
+}
+
+/* numeric inputs: hide spinners for compact editor UI */
+.pf-num input::-webkit-outer-spin-button,
+.pf-num input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* tool rail buttons */
+.pf-tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: #b9bac2;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.pf-tool-btn:hover {
+  background: #2e3036;
+  color: #ececf1;
+}
+.pf-tool-btn[data-active='true'] {
+  background: #2f3a33;
+  color: var(--pf-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-ants {
+    animation: none;
   }
 }
