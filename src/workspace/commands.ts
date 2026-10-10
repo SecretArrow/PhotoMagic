@@ -9,15 +9,17 @@
  * with an image Blob for cross-app pasting.
  */
 
-import type { DocumentState, RasterLayer, Selection } from '../engine/types';
-import { APP_VERSION, createDocument, createRasterLayer } from '../engine/document';
+import type { DocumentState, Layer, RasterLayer, Selection } from '../engine/types';
+import { APP_VERSION, createDocument, createGroupLayer, createRasterLayer } from '../engine/document';
 import { imageDataFromCanvas, putImageData } from '../engine/raster';
 import { useEditorStore } from '../state/editorStore';
 import { saveProject } from '../documents/project';
 import { downloadBlob, importImageLayer, safeFilename } from '../formats/api';
-import { importPsd, isPsdFile } from '../formats/psdImport';
+import { importPsd, isPsdFile, type ImportedLayer } from '../formats/psdImport';
 import { toast } from '../hooks/use-toast';
 import { dictionaries, translate, type Language, type TranslationKey } from '../i18n/dictionaries';
+import { runInpaint } from '../lib/filterRunner';
+import { DEFAULT_INPAINT_ITERATIONS, LARGE_HOLE_ITERATIONS, LARGE_HOLE_PIXELS } from '../engine/inpaint';
 import { toolOptionsKey } from './toolMeta';
 
 let internalClipboard: ImageData | null = null;
@@ -123,6 +125,84 @@ export function fillActiveLayerWithColor(hex: string, labelKey: TranslationKey, 
   return true;
 }
 
+/* --------------------------- content-aware fill --------------------------- */
+
+const CAF_HINT_FLAG = 'pixelforge.caf.hint.v1';
+
+/** True on the first-ever successful run (used to show the honest hint once). */
+function markCafHintSeen(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    if (localStorage.getItem(CAF_HINT_FLAG)) return false;
+    localStorage.setItem(CAF_HINT_FLAG, '1');
+    return true;
+  } catch {
+    return false; // storage blocked (strict private mode) — never block the fill
+  }
+}
+
+/**
+ * Content-aware fill (Edit ▸ Content-aware fill…): diffusion-inpaints the
+ * selection area on the active raster layer (see engine/inpaint — smooth-region
+ * fill, NOT texture synthesis). The doc-space selection mask is rasterized into
+ * layer pixel space (layers may sit at an offset), the layer runs through the
+ * worker-backed inpaint runner and the result is committed as ONE pixel history
+ * entry. Holes > 2M px run fewer iterations to stay responsive.
+ */
+export async function contentAwareFillCommand(): Promise<boolean> {
+  const store = useEditorStore.getState();
+  const layer = store.getActiveLayer();
+  const sel = store.selection;
+  if (!layer || layer.kind !== 'raster' || layer.locked || !sel) return false;
+  const raster = layer as RasterLayer;
+  const { width, height } = raster.canvas;
+
+  // Rasterize the doc-space selection into a layer-space hole mask (binary at
+  // 128 — the same coverage threshold the marching-ants tracer uses).
+  // ⚠️ Selection.mask is FULL-DOCUMENT-SIZED (sel.width × sel.height, see
+  // Selection in engine/types.ts) — index it in DOCUMENT coordinates, not in
+  // bounds-local ones. bounds only limits the scan window for speed.
+  const mask = new Uint8Array(width * height);
+  let holePx = 0;
+  const lx0 = Math.max(0, Math.floor(sel.bounds.x - layer.x));
+  const ly0 = Math.max(0, Math.floor(sel.bounds.y - layer.y));
+  const lx1 = Math.min(width, Math.ceil(sel.bounds.x + sel.bounds.w - layer.x));
+  const ly1 = Math.min(height, Math.ceil(sel.bounds.y + sel.bounds.h - layer.y));
+  for (let y = ly0; y < ly1; y++) {
+    for (let x = lx0; x < lx1; x++) {
+      const dx = x + layer.x;
+      const dy = y + layer.y;
+      if (dx < 0 || dy < 0 || dx >= sel.width || dy >= sel.height) continue;
+      if (sel.mask[dy * sel.width + dx] >= 128) {
+        mask[y * width + x] = 255;
+        holePx++;
+      }
+    }
+  }
+  if (holePx === 0) return false; // selection doesn't cover this layer
+
+  const before = imageDataFromCanvas(raster.canvas);
+  const iterations = holePx > LARGE_HOLE_PIXELS ? LARGE_HOLE_ITERATIONS : DEFAULT_INPAINT_ITERATIONS;
+  store.setJobProgress({ label: toastText('common.processing', 'Processing…'), value: 0.5 });
+  try {
+    // runInpaint clones internally — `before` stays intact for the history entry.
+    const after = await runInpaint(before, mask, iterations);
+    putImageData(raster.canvas, after); // write pixels BEFORE committing (commitPixelEdit only records the diff)
+    store.commitPixelEdit(raster.id, before, after, 'history.contentAwareFill', 'Content-aware fill');
+    const firstRun = markCafHintSeen();
+    toast({
+      title: toastText('caf.done', 'Content-aware fill applied'),
+      ...(firstRun ? { description: toastText('caf.hint', 'Best for smooth areas (sky, skin, walls). Structured textures may blur.') } : {}),
+    });
+    return true;
+  } catch {
+    toast({ title: toastText('toast.filterFailed', 'The filter could not be applied') });
+    return false;
+  } finally {
+    useEditorStore.getState().setJobProgress(null);
+  }
+}
+
 /* ------------------------------- painting ------------------------------- */
 
 /** [ / ] — resize the current tool when it has a numeric `size` option. */
@@ -191,11 +271,40 @@ export async function handleOpenFiles(files: FileList | File[]): Promise<void> {
 }
 
 /**
- * Opens a PSD as a new document: layers are rebuilt bottom→top from the PSD
- * records (which are stored top-first), preserving names, offsets, blend
- * modes, opacity and visibility. Failure shows the parser's user-facing
- * message ('import.psdFailed' once the i18n key lands; the EN literal below
- * is the graceful fallback until then).
+ * Converts one imported PSD layer into an engine layer. Group entries
+ * ('lsct' section dividers) become engine group layers via the engine's
+ * group factory, with children converted recursively (PSD child order is
+ * top-first, so it is reversed on the way in — callers walk the root list
+ * bottom-up for the same reason). Raster leaves keep their decoded canvases
+ * and offsets.
+ */
+function psdLayerToEngine(imported: ImportedLayer): Layer {
+  if (imported.isGroup) {
+    const group = createGroupLayer(
+      imported.name,
+      (imported.children ?? []).map(psdLayerToEngine).reverse(),
+    );
+    group.visible = imported.visible;
+    group.opacity = imported.opacity;
+    group.blendMode = imported.blend;
+    group.expanded = imported.expanded ?? true;
+    return group;
+  }
+  const layer = createRasterLayer(imported.name, imported.width, imported.height, imported.canvas);
+  layer.x = imported.x;
+  layer.y = imported.y;
+  layer.visible = imported.visible;
+  layer.opacity = imported.opacity;
+  layer.blendMode = imported.blend;
+  return layer;
+}
+
+/**
+ * Opens a PSD as a new document: the layer tree is rebuilt bottom→top from
+ * the PSD records (which are stored top-first), preserving names, offsets,
+ * blend modes, opacity, visibility and group nesting ('lsct' section
+ * dividers → engine group layers with expanded state). Failure shows the
+ * parser's user-facing message.
  */
 async function openPsdDocument(
   file: File,
@@ -212,14 +321,8 @@ async function openPsdDocument(
     });
     doc.layers = [];
     // PSD stores layer records top-first; doc.layers is bottom→top.
-    for (const importedLayer of imported.layers) {
-      const layer = createRasterLayer(importedLayer.name, importedLayer.width, importedLayer.height, importedLayer.canvas);
-      layer.x = importedLayer.x;
-      layer.y = importedLayer.y;
-      layer.visible = importedLayer.visible;
-      layer.opacity = importedLayer.opacity;
-      layer.blendMode = importedLayer.blend;
-      doc.layers.unshift(layer);
+    for (let i = imported.layers.length - 1; i >= 0; i -= 1) {
+      doc.layers.push(psdLayerToEngine(imported.layers[i]));
     }
     doc.selectedLayerIds = doc.layers.length > 0 ? [doc.layers[doc.layers.length - 1].id] : [];
     doc.createdAt = Date.now();

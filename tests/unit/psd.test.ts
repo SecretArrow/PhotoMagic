@@ -22,6 +22,7 @@ import {
   createAdjustmentLayer,
   createDocument,
   createFillLayer,
+  createGroupLayer,
   createRasterLayer,
 } from '../../src/engine/document';
 import { ctx2d, makeCanvas } from '../../src/engine/raster';
@@ -352,6 +353,10 @@ interface ParsedLayer {
   clipping: number;
   flags: number;
   name: string;
+  /** additional layer info block keys, in file order ('lsct', 'luni', …) */
+  keys: string[];
+  /** 'lsct' divider type (0 = plain layer, 1/2 folder, 3 bounding) */
+  sectionType: number;
 }
 
 interface ParsedPsd {
@@ -444,9 +449,37 @@ function readPSDStructure(bytes: Uint8Array): ParsedPsd {
     const nameLength = bytes[off];
     off += 1;
     const name = String.fromCharCode(...bytes.subarray(off, off + nameLength));
-    off += pascalAligned(1 + nameLength) - nameLength - 1; // pascal padding
-    if (off !== extraEnd) off = extraEnd; // tolerate extra padding
-    layers.push({ top, left, bottom, right, channels: layerChannels, blendKey, opacity, clipping, flags, name });
+    off += nameLength;
+    off += pascalAligned(1 + nameLength) - 1 - nameLength; // pascal padding
+    // additional layer info blocks: '8BIM' + key + u32 length + data
+    const keys: string[] = [];
+    let sectionType = 0;
+    while (off + 8 <= extraEnd) {
+      const sig = String.fromCharCode(bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]);
+      if (sig !== '8BIM' && sig !== '8B64') break;
+      const key = String.fromCharCode(bytes[off + 4], bytes[off + 5], bytes[off + 6], bytes[off + 7]);
+      off += 8;
+      const len = view.getUint32(off, false);
+      off += 4;
+      keys.push(key);
+      if (key === 'lsct' && len >= 4) sectionType = view.getUint32(off, false);
+      off += len;
+    }
+    if (off !== extraEnd) off = extraEnd; // tolerate unknown extra bytes
+    layers.push({
+      top,
+      left,
+      bottom,
+      right,
+      channels: layerChannels,
+      blendKey,
+      opacity,
+      clipping,
+      flags,
+      name,
+      keys,
+      sectionType,
+    });
   }
 
   // channel image data blocks follow the records, grouped per layer
@@ -664,6 +697,103 @@ describe('PSD export — layer structure roundtrip', () => {
     expect(adj.name).toBe('Invert');
     expect([adj.left, adj.top, adj.right, adj.bottom]).toEqual([0, 0, 4, 2]);
     expect(adj.channels).toHaveLength(4);
+  });
+});
+
+describe('PSD export — layer groups', () => {
+  it('emits lsct divider records around group children, nested recursively', async () => {
+    const doc = blankDoc(8, 6);
+    const solo = solidRasterLayer('Solo', 3, 2, [255, 255, 0, 255], 5, 3);
+    const hidden = solidRasterLayer('H', 2, 2, [255, 0, 0, 255], 0, 0);
+    hidden.visible = false;
+    const visible = solidRasterLayer('V', 3, 3, [0, 255, 0, 255], 2, 1);
+    const deep = solidRasterLayer('Deep', 2, 1, [0, 0, 255, 255], 4, 4);
+    const inner = createGroupLayer('Inner', [deep]);
+    inner.expanded = false; // collapsed folder → divider type 2
+    const outer = createGroupLayer('Outer', [hidden, visible, inner]);
+    outer.opacity = 0.6;
+    outer.blendMode = 'multiply';
+    doc.layers.push(solo, outer); // bottom → top
+
+    const bytes = await exportBytes(doc);
+    const psd = readPSDStructure(bytes); // throws on any length inconsistency
+    // top-first: Outer, Inner, Deep, close(Inner), V, H, close(Outer), Solo
+    expect(psd.layerCount).toBe(8);
+    expect(psd.layers.map((l) => l.name)).toEqual([
+      'Outer', 'Inner', 'Deep', '</Layer set>', 'V', 'H', '</Layer set>', 'Solo',
+    ]);
+    expect(psd.layers.map((l) => l.sectionType)).toEqual([1, 2, 0, 3, 0, 0, 3, 0]);
+
+    const [outerDiv, innerDiv, deepRec, closeInner, vRec, hRec, closeOuter, soloRec] = psd.layers;
+
+    // opening dividers carry the group's name/blend/opacity, zero rect and
+    // zero-length channel info (no pixel data)
+    expect(outerDiv.keys).toEqual(['lsct']);
+    expect(outerDiv.channels).toHaveLength(0);
+    expect([outerDiv.left, outerDiv.top, outerDiv.right, outerDiv.bottom]).toEqual([0, 0, 0, 0]);
+    expect(outerDiv.blendKey).toBe('mul ');
+    expect(outerDiv.opacity).toBe(153); // 0.6 × 255 rounded
+    expect(outerDiv.flags & 2).toBe(0); // visible group
+
+    expect(innerDiv.keys).toEqual(['lsct']);
+    expect(innerDiv.sectionType).toBe(2); // collapsed folder
+    expect(innerDiv.flags & 2).toBe(0);
+
+    // closing dividers are hidden '</Layer set>' records
+    expect(closeInner.sectionType).toBe(3);
+    expect(closeInner.flags & 2).toBe(2);
+    expect(closeOuter.sectionType).toBe(3);
+    expect(closeOuter.flags & 2).toBe(2);
+
+    // leaves keep their pixel records and hidden flags
+    for (const leaf of [deepRec, vRec, hRec, soloRec]) {
+      expect(leaf.keys).toEqual([]); // latin-1 names → no additional info
+      expect(leaf.channels.map((c) => c.id)).toEqual([0, 1, 2, -1]);
+    }
+    expect(hRec.flags & 2).toBe(2);
+    expect(vRec.flags & 2).toBe(0);
+    expect([soloRec.left, soloRec.top, soloRec.right, soloRec.bottom]).toEqual([5, 3, 8, 5]);
+  });
+
+  it('rasterizes non-raster leaves inside groups at 0,0 in document size', async () => {
+    const doc = blankDoc(3, 3);
+    const group = createGroupLayer('G', [createFillLayer('Fill', { type: 'solid', color: '#ff0000' })]);
+    doc.layers.push(group);
+
+    const psd = readPSDStructure(await exportBytes(doc));
+    expect(psd.layerCount).toBe(3); // divider + fill + closing divider
+    const [, fill] = psd.layers;
+    expect(fill.name).toBe('Fill');
+    expect([fill.left, fill.top, fill.right, fill.bottom]).toEqual([0, 0, 3, 3]);
+    expect(fill.channels).toHaveLength(4);
+  });
+
+  it('emits luni for non-Latin-1 layer and group names (pascal name degrades to "?")', async () => {
+    const doc = blankDoc(2, 2);
+    const group = createGroupLayer('группа', [solidRasterLayer('図形', 2, 2, [9, 9, 9, 255])]);
+    doc.layers.push(group);
+
+    const psd = readPSDStructure(await exportBytes(doc));
+    // top-first: group divider (lsct + luni), CJK leaf (luni), closing divider (lsct)
+    expect(psd.layers.map((l) => l.keys)).toEqual([['lsct', 'luni'], ['luni'], ['lsct']]);
+    expect(psd.layers[1].name).toBe('??'); // each CJK char degrades to "?" in the pascal name
+  });
+
+  it('still decodes the flattened composite for grouped documents', async () => {
+    const doc = blankDoc(8, 6);
+    const visible = solidRasterLayer('V', 3, 3, [0, 255, 0, 255], 2, 1);
+    const solo = solidRasterLayer('Solo', 3, 2, [255, 255, 0, 255], 5, 3);
+    const group = createGroupLayer('Outer', [visible]);
+    group.opacity = 0.6;
+    doc.layers.push(solo, group);
+
+    const bytes = await exportBytes(doc);
+    const psd = readPSDStructure(bytes);
+    const rgba = decodeComposite(bytes, psd);
+    // group at 60% opacity scales its children's alpha (0.6 × 255 = 153)
+    expect(pixelAt(rgba, 8, 3, 2)).toEqual([0, 255, 0, 153]);
+    expect(pixelAt(rgba, 8, 6, 4)).toEqual([255, 255, 0, 255]); // top-level layer untouched
+    expect(pixelAt(rgba, 8, 0, 5)).toEqual([0, 0, 0, 0]);
   });
 });
 

@@ -37,17 +37,18 @@ export function trim(stack: HistoryStack): HistoryStack {
     index = Math.max(-1, index - drop);
   }
   let total = entries.reduce((acc, e) => acc + e.bytes, 0);
-  let i = 0;
-  while (total > HISTORY_MEMORY_BUDGET && i < entries.length - 1) {
-    // never trim the newest entry (i < length-1)
-    if (i <= index) {
-      total -= entries[i].bytes;
-      entries = entries.slice(1);
-      index--;
-    } else {
-      break;
-    }
-    i++;
+  // Enforce the byte budget by dropping the OLDEST entry repeatedly. After
+  // each slice the next-oldest entry is at index 0 again, so the cursor must
+  // NOT advance (an `i++` here skipped every second candidate and could exit
+  // with the stack still over budget — e.g. push(300MB), push(50MB),
+  // push(350MB) used to leave 400MB resident). The newest entry is never
+  // dropped (`entries.length > 1`); the position shifts left with every drop
+  // and redo-tail entries (index < 0) go last — dropping a redo entry only
+  // shortens the redo walk, it never re-applies state.
+  while (total > HISTORY_MEMORY_BUDGET && entries.length > 1) {
+    total -= entries[0].bytes;
+    entries = entries.slice(1);
+    index = Math.max(-1, index - 1);
   }
   return { entries, index };
 }

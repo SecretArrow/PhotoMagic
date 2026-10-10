@@ -270,7 +270,14 @@ export default function OptionsBar() {
               { value: 'right', label: t('options.alignRight') },
             ]}
           />
-          <ColorPickerButton label={t('options.color')} color={toolOptions.text.color} onChange={(hex) => updateText({ color: hex }, true)} />
+          <ColorPickerButton
+            label={t('options.color')}
+            color={toolOptions.text.color}
+            onChange={(hex) => updateText({ color: hex }, true)}
+            onCommit={() =>
+              useEditorStore.getState().pushRecentColor(useEditorStore.getState().toolOptions.text.color)
+            }
+          />
         </Bar>
       );
 
@@ -285,9 +292,23 @@ export default function OptionsBar() {
             items={SHAPE_TYPES.map((s) => ({ value: s.value, label: t(s.labelKey) }))}
           />
           <SwitchRow label={t('options.shapeFill')} checked={o.fillEnabled} onCheckedChange={(v) => updateToolOptions('shape', { fillEnabled: v })} />
-          <ColorPickerButton label={t('options.shapeFill')} color={o.fillColor} onChange={(hex) => updateToolOptions('shape', { fillColor: hex })} />
+          <ColorPickerButton
+            label={t('options.shapeFill')}
+            color={o.fillColor}
+            onChange={(hex) => updateToolOptions('shape', { fillColor: hex })}
+            onCommit={() =>
+              useEditorStore.getState().pushRecentColor(useEditorStore.getState().toolOptions.shape.fillColor)
+            }
+          />
           <SwitchRow label={t('options.shapeStroke')} checked={o.strokeEnabled} onCheckedChange={(v) => updateToolOptions('shape', { strokeEnabled: v })} />
-          <ColorPickerButton label={t('options.shapeStroke')} color={o.strokeColor} onChange={(hex) => updateToolOptions('shape', { strokeColor: hex })} />
+          <ColorPickerButton
+            label={t('options.shapeStroke')}
+            color={o.strokeColor}
+            onChange={(hex) => updateToolOptions('shape', { strokeColor: hex })}
+            onCommit={() =>
+              useEditorStore.getState().pushRecentColor(useEditorStore.getState().toolOptions.shape.strokeColor)
+            }
+          />
           <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             {t('options.strokeWidth')}
             <NumInput

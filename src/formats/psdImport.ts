@@ -11,14 +11,21 @@
  *  - image data section — the flattened composite, used as a fallback when
  *    the file carries no usable layer records (flattened/foreign files).
  *
+ * Layer groups: records carrying an 'lsct' additional-info block are section
+ * dividers (1/2 = open/closed folder, 3 = the hidden '</Layer set>' bounding
+ * divider). A stack reconstructs the nesting: an open divider pushes a group
+ * (children accumulate into it), a type-3 divider closes it; unterminated
+ * groups auto-close at the end and stray type-3 dividers are ignored. The
+ * 'luni' Unicode layer name block, when present, supersedes the Pascal name.
+ *
  * Honest rejection policy: anything this build cannot represent — PSB (v2),
  * non-RGB color modes, 1/16/32-bit depth, unknown channel layouts, corrupt
  * or truncated section lengths — throws a `PsdImportError` whose message is
  * user-facing (shown in a toast).
  *
  * Not imported (skipped, with the composite available as a fallback in
- * flattened exports): layer/adjustment/vector masks, smart filters, layer
- * groups (children import as flat sibling layers), clipping stacks.
+ * flattened exports): layer/adjustment/vector masks, smart filters, clipping
+ * stacks.
  */
 
 import type { BlendMode } from '../engine/blend';
@@ -42,7 +49,7 @@ export class PsdImportError extends Error {
   }
 }
 
-/** One decoded PSD layer, ready to become an engine raster layer. */
+/** One decoded PSD layer, ready to become an engine layer. */
 export interface ImportedLayer {
   name: string;
   /** layer offset within the document (PSD record left/top) */
@@ -50,12 +57,22 @@ export interface ImportedLayer {
   y: number;
   width: number;
   height: number;
-  /** host canvas with the decoded RGBA pixels (size = width × height) */
+  /**
+   * Host canvas with the decoded RGBA pixels (size = width × height).
+   * Group entries carry a 1×1 transparent placeholder — they have no pixels;
+   * use `isGroup` + `children` instead.
+   */
   canvas: AnyCanvas;
   visible: boolean;
   /** 0..1 (PSD stores 0..255) */
   opacity: number;
   blend: BlendMode;
+  /** true for layer-group records ('lsct' section dividers; no pixels) */
+  isGroup?: boolean;
+  /** folder state — divider type 1 = open, 2 = closed */
+  expanded?: boolean;
+  /** nested layers in PSD file order (top first); only set on groups */
+  children?: ImportedLayer[];
 }
 
 export interface PsdImportResult {
@@ -272,6 +289,8 @@ interface LayerRecord {
   blendKey: string; // 4-char PSD key, mapped via psdBlendMode()
   visible: boolean;
   name: string;
+  /** 'lsct' section divider type (0 = plain layer, 1/2 folder, 3 bounding) */
+  sectionType: 0 | 1 | 2 | 3;
   channels: ChannelRef[];
 }
 
@@ -281,10 +300,11 @@ function pascalAligned(n: number): number {
 
 /**
  * Layer names: Photoshop's Pascal string is historically Latin-1, but modern
- * files write UTF-8 bytes (the authoritative Unicode name lives in the
- * optional 'luni' tagged block, which we deliberately don't parse). Strict
- * UTF-8 decoding is attempted first; invalid sequences fall back to a
- * byte-exact Latin-1 decode (one byte = one code point).
+ * files write UTF-8 bytes and the authoritative Unicode name lives in the
+ * optional 'luni' tagged block (preferred when present — see
+ * `decodeUtf16be`). Strict UTF-8 decoding is attempted first; invalid
+ * sequences fall back to a byte-exact Latin-1 decode (one byte = one code
+ * point).
  */
 function decodeLayerName(bytes: Uint8Array): string {
   if (typeof TextDecoder === 'undefined') {
@@ -302,11 +322,24 @@ function decodeLayerName(bytes: Uint8Array): string {
 }
 
 /**
+ * Decodes a UTF-16BE byte string (the 'luni' payload after its u32 count).
+ * Surrogate code units are preserved, so astral-plane names survive.
+ */
+function decodeUtf16be(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    s += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
+  }
+  return s;
+}
+
+/**
  * Reads the layer info section: pass 1 parses every layer record (rect,
- * channel infos, blend key, opacity, flags, Pascal name — which is followed
- * by the channel image data blocks, grouped per layer in record order, whose
- * file offsets are recorded per channel). Leaves the reader just past the
- * last channel block, before the even-length section padding.
+ * channel infos, blend key, opacity, flags, Pascal name, additional layer
+ * info — which is followed by the channel image data blocks, grouped per
+ * layer in record order, whose file offsets are recorded per channel).
+ * Leaves the reader just past the last channel block, before the even-length
+ * section padding.
  */
 function parseLayerRecords(r: PsdReader, layerInfoEnd: number): LayerRecord[] {
   const count = r.i16();
@@ -351,6 +384,30 @@ function parseLayerRecords(r: PsdReader, layerInfoEnd: number): LayerRecord[] {
     const nameBytes = r.raw(nameLength);
     const padding = pascalAligned(1 + nameLength) - 1 - nameLength;
     if (padding > 0) r.skip(padding);
+
+    // Additional layer info (Photoshop 4+): '8BIM'/'8B64' + key + length +
+    // data. Only 'lsct' (layer section divider) and 'luni' (Unicode name)
+    // are meaningful here; unknown blocks are skipped by length.
+    let sectionType: 0 | 1 | 2 | 3 = 0;
+    let unicodeName: string | null = null;
+    while (r.pos + 8 <= extraEnd) {
+      const sig = r.ascii(4);
+      if (sig !== '8BIM' && sig !== '8B64') break;
+      const key = r.ascii(4);
+      const infoLength = r.u32();
+      if (infoLength > extraEnd - r.pos) break; // tolerate a corrupt tail
+      const data = r.raw(infoLength);
+      if (key === 'lsct' && infoLength >= 4) {
+        const type = new DataView(data.buffer, data.byteOffset, 4).getUint32(0, false);
+        if (type <= 3) sectionType = type as 0 | 1 | 2 | 3;
+      } else if (key === 'luni' && infoLength >= 4) {
+        const units = new DataView(data.buffer, data.byteOffset, 4).getUint32(0, false);
+        if (4 + units * 2 <= infoLength) {
+          const name = decodeUtf16be(data.subarray(4, 4 + units * 2));
+          if (name.length > 0) unicodeName = name;
+        }
+      }
+    }
     r.pos = extraEnd; // tolerate unknown extra fields
 
     declared.push(refs);
@@ -362,22 +419,29 @@ function parseLayerRecords(r: PsdReader, layerInfoEnd: number): LayerRecord[] {
       opacity,
       blendKey,
       visible: (flags & 0x02) === 0, // PSD flag bit 1 = "not visible"
-      name: decodeLayerName(nameBytes),
+      name: unicodeName ?? decodeLayerName(nameBytes),
+      sectionType,
       channels: [],
     });
   }
 
   // Pass 2: channel image data blocks, grouped per layer in record order.
+  // Section-divider records (layer groups) declare zero-length channel info
+  // — those carry no data block at all.
   for (let i = 0; i < records.length; i += 1) {
     const record = records[i];
     const refs = declared[i] ?? [];
     for (const ref of refs) {
+      if (ref.dataLength === 0) {
+        record.channels.push({ id: ref.id, dataLength: 0, offset: r.pos, compression: -1 });
+        continue;
+      }
+      if (ref.dataLength === 1) {
+        throw new PsdImportError('This PSD file is truncated or corrupted.');
+      }
       const compression = r.u16();
       if (compression !== 0 && compression !== 1) {
         throw new PsdImportError(`Unsupported channel compression ${compression} (expected raw or RLE).`);
-      }
-      if (ref.dataLength < 2) {
-        throw new PsdImportError('This PSD file is truncated or corrupted.');
       }
       record.channels.push({ id: ref.id, dataLength: ref.dataLength, offset: r.pos, compression });
       r.skip(ref.dataLength - 2);
@@ -427,6 +491,7 @@ function decodeLayerCanvas(r: PsdReader, record: LayerRecord): AnyCanvas | null 
   if (width <= 0 || height <= 0) return null;
   const planes = new Map<number, Uint8Array>();
   for (const channel of record.channels) {
+    if (channel.dataLength <= 2) continue; // no payload (divider info / bare compression tag)
     if (channel.id === -2 || channel.id === -3) continue; // user/real-user masks — not imported
     if (channel.id >= 0 ? channel.id > 2 : channel.id !== -1) {
       // unknown color/spot channel ids — reject honestly instead of guessing
@@ -576,20 +641,56 @@ export async function importPsd(source: ArrayBuffer | File): Promise<PsdImportRe
     // tolerate trailing tagged blocks inside the section
     r.pos = sectionEnd;
 
+    // Reconstruct the group nesting: an 'lsct' divider of type 1/2 opens a
+    // group (children accumulate into it), type 3 closes the innermost open
+    // group. Unterminated groups auto-close at the end; a stray type-3
+    // divider without an open group is ignored.
+    const openGroups: ImportedLayer[] = [];
+    const attach = (layer: ImportedLayer): void => {
+      const parent = openGroups[openGroups.length - 1];
+      if (parent) (parent.children ??= []).push(layer);
+      else layers.push(layer);
+    };
     for (const record of records) {
-      const canvas = decodeLayerCanvas(r, record);
-      if (!canvas) continue; // empty rect / no color channels
-      layers.push({
-        name: record.name || 'Layer',
-        x: record.left,
-        y: record.top,
-        width: record.width,
-        height: record.height,
-        canvas,
-        visible: record.visible,
-        opacity: Math.min(1, Math.max(0, record.opacity / 255)),
-        blend: psdBlendMode(record.blendKey),
-      });
+      if (record.sectionType === 1 || record.sectionType === 2) {
+        const group: ImportedLayer = {
+          name: record.name || 'Group',
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          canvas: makeCanvas(1, 1), // transparent placeholder — groups have no pixels
+          visible: record.visible,
+          opacity: Math.min(1, Math.max(0, record.opacity / 255)),
+          blend: psdBlendMode(record.blendKey),
+          isGroup: true,
+          expanded: record.sectionType === 1,
+          children: [],
+        };
+        openGroups.push(group);
+      } else if (record.sectionType === 3) {
+        const group = openGroups.pop();
+        if (group) attach(group);
+      } else {
+        const canvas = decodeLayerCanvas(r, record);
+        if (!canvas) continue; // empty rect / no color channels
+        attach({
+          name: record.name || 'Layer',
+          x: record.left,
+          y: record.top,
+          width: record.width,
+          height: record.height,
+          canvas,
+          visible: record.visible,
+          opacity: Math.min(1, Math.max(0, record.opacity / 255)),
+          blend: psdBlendMode(record.blendKey),
+        });
+      }
+    }
+    let open = openGroups.pop();
+    while (open) {
+      attach(open); // unterminated group → auto-close at the end of the records
+      open = openGroups.pop();
     }
   }
 

@@ -22,6 +22,7 @@ export default function ColorPanel() {
   const fgColor = useEditorStore((s) => s.fgColor);
   const bgColor = useEditorStore((s) => s.bgColor);
   const swatches = useEditorStore((s) => s.swatches);
+  const recentColors = useEditorStore((s) => s.recentColors);
   const [target, setTarget] = useState<ColorTarget>('fg');
 
   const color = target === 'fg' ? fgColor : bgColor;
@@ -97,7 +98,11 @@ export default function ColorPanel() {
         </p>
       </div>
 
-      <HsvPicker value={color} onChange={setColor} />
+      <HsvPicker
+        value={color}
+        onChange={setColor}
+        onCommit={(hex) => useEditorStore.getState().pushRecentColor(hex)}
+      />
 
       {/* RGB fields */}
       <div className="flex items-center gap-2">
@@ -114,6 +119,26 @@ export default function ColorPanel() {
         <NumInput value={Math.round(hsl.s)} min={0} max={100} onChange={(v) => setHsl({ s: v })} ariaLabel={t('color.s')} className="h-6 w-11 px-1 text-center text-[11px]" />
         <NumInput value={Math.round(hsl.l)} min={0} max={100} onChange={(v) => setHsl({ l: v })} ariaLabel={t('color.l')} className="h-6 w-11 px-1 text-center text-[11px]" />
       </div>
+
+      {/* recent colors (auto-tracked on picker commit, most-recent first) */}
+      {recentColors.length > 0 && (
+        <div>
+          <span className="mb-1.5 block text-[11px] text-muted-foreground">{t('color.recent')}</span>
+          <div className="grid grid-cols-8 gap-1">
+            {recentColors.map((rc) => (
+              <button
+                key={rc}
+                type="button"
+                title={rc.toUpperCase()}
+                aria-label={rc.toUpperCase()}
+                className="aspect-square cursor-pointer rounded border border-border outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                style={{ backgroundColor: rc }}
+                onClick={() => setColor(rc)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* swatches */}
       <div>

@@ -17,8 +17,9 @@ import {
   decodePackBits,
   importPsd,
   isPsdFile,
+  type ImportedLayer,
 } from '../../src/formats/psdImport';
-import { createDocument, createRasterLayer } from '../../src/engine/document';
+import { createDocument, createGroupLayer, createRasterLayer } from '../../src/engine/document';
 import { ctx2d, makeCanvas, type AnyCanvas } from '../../src/engine/raster';
 import type { DocumentState, RasterLayer } from '../../src/engine/types';
 
@@ -440,6 +441,118 @@ function buildSyntheticPsd(opts: SynthOptions = {}): Uint8Array<ArrayBuffer> {
 }
 
 /* ------------------------------------------------------------------ */
+/* multi-record synthetic PSD builder (groups / malformed nesting)      */
+/* ------------------------------------------------------------------ */
+
+interface SynthChannel {
+  id: number;
+  /** raw plane bytes after the compression tag; null = zero-length info */
+  data?: number[] | null;
+}
+
+interface SynthRecord {
+  name?: string;
+  flags?: number;
+  opacity?: number;
+  blendKey?: string;
+  /** 'lsct' divider type (0/undefined = plain layer) */
+  sectionType?: number;
+  /** [top, left, bottom, right]; defaults to the full canvas for leaves */
+  rect?: [number, number, number, number];
+  /** defaults to R/G/B/A raw planes for leaves, none for dividers */
+  channels?: SynthChannel[];
+  /** 'luni' Unicode name block (preferred by the reader over the pascal name) */
+  luni?: string | null;
+}
+
+/**
+ * Builds a PSD with an arbitrary number of layer records (raw channel data,
+ * transparent raw composite) for group-nesting tests.
+ */
+function buildMultiRecordPsd(
+  records: SynthRecord[],
+  opts: { width?: number; height?: number } = {},
+): Uint8Array<ArrayBuffer> {
+  const width = opts.width ?? 4;
+  const height = opts.height ?? 2;
+
+  const recordBufs: ByteBuf[] = [];
+  const channelBufs: ByteBuf[] = [];
+  for (const rec of records) {
+    const rect = rec.rect ?? [0, 0, height, width];
+    const rectW = rect[3] - rect[1];
+    const rectH = rect[2] - rect[0];
+    const planeSize = Math.max(0, rectW * rectH);
+    const channels =
+      rec.channels ??
+      (rec.sectionType
+        ? []
+        : [
+            { id: 0, data: new Array(planeSize).fill(0x11) },
+            { id: 1, data: new Array(planeSize).fill(0x22) },
+            { id: 2, data: new Array(planeSize).fill(0x33) },
+            { id: -1, data: new Array(planeSize).fill(0xff) },
+          ]);
+    const nameBytes = Array.from(rec.name ?? 'Layer', (c) => c.charCodeAt(0) & 0xff);
+
+    const record = new ByteBuf();
+    record.i32(rect[0]).i32(rect[1]).i32(rect[2]).i32(rect[3]);
+    record.u16(channels.length);
+    const channelData = new ByteBuf();
+    for (const channel of channels) {
+      if (channel.data) {
+        record.i16(channel.id).u32(2 + channel.data.length);
+        channelData.u16(0).raw(channel.data); // compression 0 = raw
+      } else {
+        record.i16(channel.id).u32(0); // zero-length channel info (divider style)
+      }
+    }
+    record.ascii('8BIM').ascii(rec.blendKey ?? 'norm');
+    record.u8(rec.opacity ?? 255).u8(0).u8(rec.flags ?? 0).u8(0);
+
+    const extra = new ByteBuf();
+    extra.u32(0).u32(0); // mask + blending ranges
+    extra.u8(nameBytes.length).raw(nameBytes);
+    const pascal = Math.max(4, Math.ceil((1 + nameBytes.length) / 4) * 4);
+    while (extra.length < 8 + pascal) extra.u8(0);
+    if (rec.sectionType) {
+      extra.ascii('8BIM').ascii('lsct').u32(8).u32(rec.sectionType).u32(0);
+    }
+    if (rec.luni !== undefined && rec.luni !== null) {
+      const units = Array.from(rec.luni, (c) => c.codePointAt(0) ?? 0x3f);
+      extra.ascii('8BIM').ascii('luni').u32(4 + units.length * 2).u32(units.length);
+      for (const unit of units) extra.u16(unit);
+    }
+    if (extra.length % 2 !== 0) extra.u8(0);
+    record.u32(extra.length).raw(extra.finish());
+
+    recordBufs.push(record);
+    channelBufs.push(channelData);
+  }
+
+  const recordsTotal = recordBufs.reduce((a, b) => a + b.length, 0);
+  const channelsTotal = channelBufs.reduce((a, b) => a + b.length, 0);
+  const rawInfo = 2 + recordsTotal + channelsTotal;
+  const pad = rawInfo % 2;
+
+  const out = new ByteBuf();
+  out.ascii('8BPS').u16(1).u16(0).u16(0).u16(0);
+  out.u16(4).u32(height).u32(width).u16(8).u16(3);
+  out.u32(0).u32(0); // color mode + resources
+  out.u32(rawInfo + pad + 8); // layer & mask section length
+  out.u32(rawInfo + pad); // layer info length
+  out.i16(records.length);
+  for (const buf of recordBufs) out.raw(buf.finish());
+  for (const buf of channelBufs) out.raw(buf.finish());
+  for (let i = 0; i < pad; i += 1) out.u8(0);
+  out.u32(0); // global mask info
+
+  out.u16(0); // composite: raw, transparent
+  for (let p = 0; p < 4; p += 1) out.raw(new Array(width * height).fill(0));
+  return out.finish();
+}
+
+/* ------------------------------------------------------------------ */
 /* strategy A — writer → reader roundtrip                              */
 /* ------------------------------------------------------------------ */
 
@@ -510,6 +623,208 @@ describe('PSD import — writer roundtrip', () => {
     expect(background.blend).toBe('normal');
     const img = ctx2d(background.canvas).getImageData(0, 0, 2, 2);
     expect(Array.from(img.data)).toEqual(new Array(16).fill(0)); // transparent composite
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* layer groups — tree roundtrip                                       */
+/* ------------------------------------------------------------------ */
+
+describe('PSD import — layer groups', () => {
+  it('round-trips a grouped document (tree shape, names, expanded flags, pixels, offsets)', async () => {
+    const doc = blankDoc(8, 6);
+    const solo = solidRasterLayer('Solo', 3, 2, [255, 255, 0, 255], 5, 3);
+    const hidden = solidRasterLayer('H', 2, 2, [255, 0, 0, 255], 0, 0);
+    hidden.visible = false;
+    const visible = solidRasterLayer('V', 3, 3, [0, 255, 0, 255], 2, 1);
+    const deep = solidRasterLayer('Deep', 2, 1, [0, 0, 255, 255], 4, 4);
+    const inner = createGroupLayer('Inner', [deep]);
+    inner.expanded = false;
+    const outer = createGroupLayer('Outer', [hidden, visible, inner]);
+    doc.layers.push(solo, outer); // bottom → top
+
+    const bytes = await exportBytes(doc);
+    const result = await importPsd(new File([bytes], 'Groups.psd'));
+
+    expect(result.usedComposite).toBe(false);
+    expect(result.width).toBe(8);
+    expect(result.height).toBe(6);
+    // PSD file order is top-first: the outer group precedes the top-level leaf
+    expect(result.layers.map((l) => l.name)).toEqual(['Outer', 'Solo']);
+
+    const [outerL, soloL] = result.layers as [ImportedLayer, ImportedLayer];
+    expect(outerL.isGroup).toBe(true);
+    expect(outerL.expanded).toBe(true);
+    expect(outerL.visible).toBe(true);
+    expect(outerL.opacity).toBe(1);
+    expect(outerL.blend).toBe('normal');
+    expect(outerL.children!.map((c) => c.name)).toEqual(['Inner', 'V', 'H']);
+
+    const [innerL, vL, hL] = outerL.children!;
+    expect(innerL.isGroup).toBe(true);
+    expect(innerL.expanded).toBe(false);
+    expect(innerL.children!.map((c) => c.name)).toEqual(['Deep']);
+
+    const deepL = innerL.children![0];
+    expect(deepL.isGroup).toBeFalsy();
+    expect([deepL.x, deepL.y, deepL.width, deepL.height]).toEqual([4, 4, 2, 1]);
+    expectSamePixels(deepL.canvas, deep.canvas as HTMLCanvasElement);
+
+    expect(vL.isGroup).toBeFalsy();
+    expect(vL.visible).toBe(true);
+    expect([vL.x, vL.y, vL.width, vL.height]).toEqual([2, 1, 3, 3]);
+    expectSamePixels(vL.canvas, visible.canvas as HTMLCanvasElement);
+
+    expect(hL.isGroup).toBeFalsy();
+    expect(hL.visible).toBe(false);
+    expectSamePixels(hL.canvas, hidden.canvas as HTMLCanvasElement);
+
+    expect(soloL.isGroup).toBeFalsy();
+    expect(soloL.expanded).toBeUndefined();
+    expect([soloL.x, soloL.y, soloL.width, soloL.height]).toEqual([5, 3, 3, 2]);
+    expectSamePixels(soloL.canvas, solo.canvas as HTMLCanvasElement);
+  });
+
+  it('preserves group blend, opacity, visibility and collapsed state', async () => {
+    const doc = blankDoc(4, 4);
+    const child = solidRasterLayer('C', 1, 1, [1, 2, 3, 255]);
+    const group = createGroupLayer('G', [child]);
+    group.expanded = false;
+    group.blendMode = 'screen';
+    group.opacity = 0.5;
+    group.visible = false;
+    doc.layers.push(group);
+
+    const bytes = await exportBytes(doc);
+    const result = await importPsd(bytes.buffer);
+    expect(result.layers).toHaveLength(1);
+    const [imported] = result.layers;
+    expect(imported.isGroup).toBe(true);
+    expect(imported.name).toBe('G');
+    expect(imported.expanded).toBe(false);
+    expect(imported.blend).toBe('screen');
+    expect(Math.round(imported.opacity * 255)).toBe(128); // 0.5 × 255 rounded
+    expect(imported.visible).toBe(false);
+    expect(imported.children).toHaveLength(1);
+    expect(imported.children![0].name).toBe('C');
+  });
+
+  it('imports an empty group as a childless group layer', async () => {
+    const doc = blankDoc(2, 2);
+    doc.layers.push(createGroupLayer('Empty'));
+    const bytes = await exportBytes(doc);
+    const result = await importPsd(bytes.buffer);
+    expect(result.usedComposite).toBe(false);
+    expect(result.layers).toHaveLength(1);
+    expect(result.layers[0].isGroup).toBe(true);
+    expect(result.layers[0].name).toBe('Empty');
+    expect(result.layers[0].children).toEqual([]);
+  });
+
+  it('round-trips non-Latin-1 group and layer names via luni', async () => {
+    const doc = blankDoc(3, 2);
+    const leaf = solidRasterLayer('図形', 2, 1, [7, 7, 7, 255], 1, 1);
+    doc.layers.push(createGroupLayer('группа', [leaf]));
+    const bytes = await exportBytes(doc);
+    const result = await importPsd(bytes.buffer);
+    expect(result.layers[0].name).toBe('группа');
+    expect(result.layers[0].children![0].name).toBe('図形');
+  });
+
+  it('parses hand-built Photoshop-style dividers with zero-length channel info', async () => {
+    // Real Photoshop files declare R/G/B/A channel infos with dataLength 0 on
+    // divider records — they must not trip the channel-data walker.
+    const bytes = buildMultiRecordPsd([
+      { name: 'Grp', sectionType: 1, opacity: 200, channels: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: -1 }] },
+      { name: 'Leaf', rect: [0, 1, 2, 3], channels: [
+        { id: 0, data: [1, 2, 3, 4] },
+        { id: 1, data: [5, 6, 7, 8] },
+        { id: 2, data: [9, 10, 11, 12] },
+        { id: -1, data: [255, 255, 255, 128] },
+      ] },
+      { name: '</Layer set>', sectionType: 3, flags: 2 },
+    ]);
+    const result = await importPsd(new File([bytes], 'psd-dividers.psd'));
+    expect(result.usedComposite).toBe(false);
+    expect(result.layers).toHaveLength(1);
+    const [group] = result.layers;
+    expect(group.isGroup).toBe(true);
+    expect(group.name).toBe('Grp');
+    expect(Math.round(group.opacity * 255)).toBe(200);
+    expect(group.children).toHaveLength(1);
+    const [leaf] = group.children!;
+    expect(leaf.name).toBe('Leaf');
+    expect([leaf.x, leaf.y, leaf.width, leaf.height]).toEqual([1, 0, 2, 2]);
+    const img = ctx2d(leaf.canvas).getImageData(0, 0, 2, 2);
+    expect(Array.from(img.data)).toEqual([
+      1, 5, 9, 255, 2, 6, 10, 255,
+      3, 7, 11, 255, 4, 8, 12, 128,
+    ]);
+  });
+
+  it('handles nested groups and keeps children in PSD (top-first) order', async () => {
+    const bytes = buildMultiRecordPsd([
+      { name: 'A', sectionType: 1 },
+      { name: 'B', sectionType: 2 },
+      { name: 'leaf-in-B' },
+      { name: '</Layer set>', sectionType: 3, flags: 2 },
+      { name: 'leaf-in-A' },
+      { name: '</Layer set>', sectionType: 3, flags: 2 },
+    ]);
+    const result = await importPsd(bytes.buffer);
+    expect(result.layers.map((l) => l.name)).toEqual(['A']);
+    const [a] = result.layers;
+    expect(a.isGroup).toBe(true);
+    expect(a.expanded).toBe(true);
+    expect(a.children!.map((l) => l.name)).toEqual(['B', 'leaf-in-A']);
+    expect(a.children![0].isGroup).toBe(true);
+    expect(a.children![0].expanded).toBe(false);
+    expect(a.children![0].children!.map((l) => l.name)).toEqual(['leaf-in-B']);
+  });
+
+  it('auto-closes unterminated groups at the end of the record list', async () => {
+    const bytes = buildMultiRecordPsd([
+      { name: 'Open', sectionType: 1 },
+      { name: 'L' },
+      { name: 'L2' },
+    ]);
+    const result = await importPsd(bytes.buffer);
+    expect(result.usedComposite).toBe(false);
+    expect(result.layers).toHaveLength(1);
+    const [group] = result.layers;
+    expect(group.isGroup).toBe(true);
+    expect(group.children!.map((l) => l.name)).toEqual(['L', 'L2']);
+  });
+
+  it('ignores stray bounding dividers without an open group', async () => {
+    const bytes = buildMultiRecordPsd([
+      { name: 'L' },
+      { name: '</Layer set>', sectionType: 3, flags: 2 },
+    ]);
+    const result = await importPsd(bytes.buffer);
+    expect(result.usedComposite).toBe(false);
+    expect(result.layers.map((l) => l.name)).toEqual(['L']);
+  });
+
+  it('falls back to the composite when the only record is a stray bounding divider', async () => {
+    const bytes = buildMultiRecordPsd([
+      { name: '</Layer set>', sectionType: 3, flags: 2 },
+    ]);
+    const result = await importPsd(bytes.buffer);
+    expect(result.usedComposite).toBe(true);
+    expect(result.layers.map((l) => l.name)).toEqual(['Background']);
+  });
+
+  it('prefers the luni Unicode name over the pascal name', async () => {
+    const bytes = buildMultiRecordPsd([{ name: '?', luni: '認' }]);
+    const result = await importPsd(bytes.buffer);
+    expect(result.layers[0].name).toBe('認');
+  });
+
+  it('keeps the pascal name when luni is empty', async () => {
+    const bytes = buildMultiRecordPsd([{ name: 'Pascal', luni: '' }]);
+    const result = await importPsd(bytes.buffer);
+    expect(result.layers[0].name).toBe('Pascal');
   });
 });
 

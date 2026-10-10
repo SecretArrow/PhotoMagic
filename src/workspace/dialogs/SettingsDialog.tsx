@@ -26,7 +26,7 @@ export default function SettingsDialog({ open, onOpenChange }: WorkspaceDialogPr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-h-[85dvh] max-w-sm overflow-y-auto pf-scroll">
         <DialogHeader>
           <DialogTitle>{t('dialog.settings.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t('dialog.settings.title')}</DialogDescription>

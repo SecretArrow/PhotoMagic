@@ -150,6 +150,8 @@ export interface EditorStore {
   fgColor: string;
   bgColor: string;
   swatches: string[];
+  /** Last colors actually committed for use (picker commit / tool color), most-recent first. */
+  recentColors: string[];
   ui: UiState;
   settings: EditorSettings;
   extras: EditorUiExtras;
@@ -220,6 +222,8 @@ export interface EditorStore {
   swapColors(): void;
   addSwatch(c: string): void;
   removeSwatch(c: string): void;
+  /** Records a color as recently used (deduped, most-recent first, capped at 8). */
+  pushRecentColor(c: string): void;
 
   /* history */
   undo(): void;
@@ -256,6 +260,38 @@ export interface EditorStore {
   setStorageInfo(info: UiState['storageInfo']): void;
 }
 
+/** Cap for the recent-colors chip row (most-recent first, deduped). */
+const RECENT_COLORS_MAX = 8;
+
+/**
+ * Debounced recent-color tracking: color pickers fire setFgColor on every
+ * drag tick, so the FINAL color of a pick gesture is what deserves a Recent
+ * chip. Flushes after a short idle; also flushed eagerly on page hide so a
+ * quick pick→close still records. No-ops outside the browser (tests/SSR).
+ */
+let recentColorTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRecentColor: string | null = null;
+function scheduleRecentColor(hex: string): void {
+  if (typeof window === 'undefined') return;
+  pendingRecentColor = hex.toLowerCase();
+  if (recentColorTimer) clearTimeout(recentColorTimer);
+  recentColorTimer = setTimeout(flushRecentColor, 800);
+  if (!recentColorFlushHooked) {
+    recentColorFlushHooked = true;
+    window.addEventListener('pagehide', flushRecentColor);
+  }
+}
+let recentColorFlushHooked = false;
+function flushRecentColor(): void {
+  if (recentColorTimer) {
+    clearTimeout(recentColorTimer);
+    recentColorTimer = null;
+  }
+  const hex = pendingRecentColor;
+  pendingRecentColor = null;
+  if (hex) useEditorStore.getState().pushRecentColor(hex);
+}
+
 function bumpRevision(rev: number): number {
   return rev + 1;
 }
@@ -276,6 +312,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   fgColor: '#111111',
   bgColor: '#ffffff',
   swatches: ['#111111', '#ffffff', '#e63946', '#f4a261', '#2a9d8f', '#3c8f5a', '#457b9d', '#7209b7'],
+  recentColors: [],
   ui: {
     dialog: null,
     rightPanel: 'layers',
@@ -947,18 +984,30 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setFgColor(c) {
     set({ fgColor: c });
+    scheduleRecentColor(c);
   },
   setBgColor(c) {
     set({ bgColor: c });
   },
   swapColors() {
-    set((s) => ({ fgColor: s.bgColor, bgColor: s.fgColor }));
+    set((s) => {
+      scheduleRecentColor(s.bgColor);
+      return { fgColor: s.bgColor, bgColor: s.fgColor };
+    });
   },
   addSwatch(c) {
     set((s) => (s.swatches.includes(c) ? s : { swatches: [...s.swatches, c].slice(-40) }));
   },
   removeSwatch(c) {
     set((s) => ({ swatches: s.swatches.filter((x) => x !== c) }));
+  },
+  pushRecentColor(c) {
+    const hex = c.toLowerCase();
+    set((s) =>
+      s.recentColors[0] === hex
+        ? s
+        : { recentColors: [hex, ...s.recentColors.filter((x) => x !== hex)].slice(0, RECENT_COLORS_MAX) },
+    );
   },
 
   /* ------------------------- history --------------------------- */

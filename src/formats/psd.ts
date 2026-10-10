@@ -9,16 +9,26 @@
  *  - an image data section with the RLE-compressed flattened composite.
  *
  * Layer mapping: raster layers are written from their own canvas + x/y
- * offset; every other kind (text, shape, fill, adjustment, group) is
+ * offset; every other leaf kind (text, shape, fill, adjustment) is
  * rasterized via renderLayerIsolated() at 0,0 in full document size.
  * Hidden layers are included with the PSD "not visible" flag (flags bit 1)
  * so visibility round-trips. Blend modes map onto the standard PSD keys.
+ *
+ * Layer groups: each group emits an 'lsct' section-divider record (type 1 =
+ * open folder, 2 = closed folder — mirroring `GroupLayer.expanded`), then
+ * its children recursively, then a hidden type-3 bounding divider named
+ * '</Layer set>'. Divider records carry the group's name/blend/opacity and
+ * a zero rect (0,0,0,0) with zero-length channel info — the same shape
+ * GIMP writes and Photoshop accepts; there is no pixel data on dividers.
+ * Names that are not fully Latin-1 additionally emit an 'luni' (Unicode
+ * layer name) block, which readers (including ours) prefer over the
+ * '?'-substituted pascal name.
  *
  * Self-contained and browser-safe: only engine canvas helpers are used,
  * no external dependencies.
  */
 
-import type { DocumentState, Layer } from '../engine/types';
+import type { DocumentState, GroupLayer, Layer } from '../engine/types';
 import type { BlendMode } from '../engine/blend';
 import { composeDocument, renderLayerIsolated } from '../engine/render';
 import { imageDataFromCanvas, makeCanvas, type AnyCanvas } from '../engine/raster';
@@ -28,6 +38,15 @@ export const PSD_EXTENSION = 'psd';
 const PSD_MIME = 'image/vnd.adobe.photoshop';
 const PSD_SIGNATURE = '8BPS';
 const MAX_LAYERS = 32767; // layer count is a signed 16-bit field
+
+/** PSD 'lsct' layer section divider types (Adobe spec). */
+const SECTION_DIVIDER = {
+  OPEN_FOLDER: 1,
+  CLOSED_FOLDER: 2,
+  BOUNDING: 3,
+} as const;
+
+const BOUNDING_DIVIDER_NAME = '</Layer set>';
 
 /** Engine blend mode → 4-character PSD blend key ('norm' for unknown). */
 const BLEND_TO_PSD: Record<BlendMode, string> = {
@@ -206,7 +225,11 @@ interface PsdLayerEntry {
   opacity: number; // 0..255
   blendKey: string; // 4 chars
   visible: boolean;
-  channels: PsdChannelData[]; // R, G, B, alpha
+  channels: PsdChannelData[]; // R, G, B, alpha (empty for section dividers)
+  /** 0 = plain layer, 1/2 = open/closed folder, 3 = bounding '</Layer set>' */
+  sectionType: 0 | 1 | 2 | 3;
+  /** 'luni' payload (u32 unit count + UTF-16BE) when the name is not Latin-1 */
+  luni: Uint8Array | null;
 }
 
 /** PSD channel ids in write order: R, G, B, transparency. */
@@ -263,6 +286,78 @@ function pascalStringLength(name: Uint8Array): number {
   return Math.max(4, Math.ceil((1 + name.length) / 4) * 4);
 }
 
+/** True when every character of `name` is representable in Latin-1. */
+function isLatin1(name: string): boolean {
+  for (const char of name) {
+    if ((char.codePointAt(0) ?? 0x3f) > 0xff) return false;
+  }
+  return true;
+}
+
+/**
+ * Builds the 'luni' (Unicode layer name) additional-info payload:
+ * u32 UTF-16 code-unit count followed by the name in UTF-16BE.
+ */
+function luniPayload(name: string): Uint8Array {
+  const units: number[] = [];
+  for (const char of name) {
+    const code = char.codePointAt(0) ?? 0x3f;
+    if (code > 0xffff) {
+      const v = code - 0x10000;
+      units.push(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff)); // surrogate pair
+    } else {
+      units.push(code);
+    }
+  }
+  const data = new Uint8Array(4 + units.length * 2);
+  const view = new DataView(data.buffer);
+  view.setUint32(0, units.length, false);
+  units.forEach((unit, i) => view.setUint16(4 + i * 2, unit, false));
+  return data;
+}
+
+function layerOpacityByte(opacity: number): number {
+  return Math.round(Math.min(1, Math.max(0, opacity)) * 255);
+}
+
+/**
+ * Group divider record: carries the group's name/blend/opacity/visibility
+ * with a zero rect and no channel data (parsing is purely structural).
+ */
+function groupDividerEntry(group: GroupLayer, open: boolean): PsdLayerEntry {
+  const name = group.name;
+  return {
+    name: latin1Name(name),
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    opacity: layerOpacityByte(group.opacity),
+    blendKey: psdBlendKey(group.blendMode),
+    visible: group.visible,
+    channels: [],
+    sectionType: open ? SECTION_DIVIDER.OPEN_FOLDER : SECTION_DIVIDER.CLOSED_FOLDER,
+    luni: isLatin1(name) ? null : luniPayload(name),
+  };
+}
+
+/** Hidden bounding divider that closes the currently open group. */
+function boundingDividerEntry(): PsdLayerEntry {
+  return {
+    name: latin1Name(BOUNDING_DIVIDER_NAME),
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    opacity: 255,
+    blendKey: 'norm',
+    visible: false,
+    channels: [],
+    sectionType: SECTION_DIVIDER.BOUNDING,
+    luni: null,
+  };
+}
+
 /**
  * Turns one engine layer into a PSD layer entry; returns null when the
  * layer has no pixels (zero-width/height canvas).
@@ -276,7 +371,7 @@ function collectLayer(layer: Layer, doc: DocumentState): PsdLayerEntry | null {
     left = Math.round(layer.x);
     top = Math.round(layer.y);
   } else {
-    // text/shape/fill/adjustment/group: rasterized at 0,0 in document size
+    // text/shape/fill/adjustment leaves: rasterized at 0,0 in document size
     canvas = renderLayerIsolated(layer, doc);
     left = 0;
     top = 0;
@@ -284,18 +379,41 @@ function collectLayer(layer: Layer, doc: DocumentState): PsdLayerEntry | null {
   const width = canvas.width;
   const height = canvas.height;
   if (width < 1 || height < 1) return null;
+  const name = layer.name;
   const planes = splitPlanes(imageDataFromCanvas(canvas));
   return {
-    name: latin1Name(layer.name),
+    name: latin1Name(name),
     left,
     top,
     width,
     height,
-    opacity: Math.round(Math.min(1, Math.max(0, layer.opacity)) * 255),
+    opacity: layerOpacityByte(layer.opacity),
     blendKey: psdBlendKey(layer.blendMode),
     visible: layer.visible,
     channels: planes.map((plane) => compressChannel(plane, width, height)),
+    sectionType: 0,
+    luni: isLatin1(name) ? null : luniPayload(name),
   };
+}
+
+/**
+ * Walks the layer tree top-first and appends PSD layer entries: groups
+ * emit an open/closed divider record, their children (recursively), then a
+ * hidden '</Layer set>' bounding divider; leaves emit pixel records.
+ */
+function collectTree(layers: Layer[], doc: DocumentState, entries: PsdLayerEntry[]): void {
+  for (let i = layers.length - 1; i >= 0; i -= 1) {
+    const layer = layers[i];
+    if (layer.kind === 'group') {
+      const group = layer as GroupLayer;
+      entries.push(groupDividerEntry(group, group.expanded));
+      collectTree(group.children, doc, entries);
+      entries.push(boundingDividerEntry());
+    } else {
+      const entry = collectLayer(layer, doc);
+      if (entry) entries.push(entry);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -307,12 +425,10 @@ function collectLayer(layer: Layer, doc: DocumentState): PsdLayerEntry | null {
  * Blob (RGB, 8-bit, RLE-compressed).
  */
 export async function exportPsd(doc: DocumentState): Promise<Blob> {
-  // PSD stores layer records top-first; doc.layers is bottom→top.
+  // PSD stores layer records top-first; doc.layers is bottom→top. Groups
+  // expand into divider + children + bounding-divider record sequences.
   const entries: PsdLayerEntry[] = [];
-  for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
-    const entry = collectLayer(doc.layers[i], doc);
-    if (entry) entries.push(entry);
-  }
+  collectTree(doc.layers, doc, entries);
   if (entries.length > MAX_LAYERS) {
     throw new Error(`PSD export supports at most ${MAX_LAYERS} layers (got ${entries.length})`);
   }
@@ -329,15 +445,18 @@ export async function exportPsd(doc: DocumentState): Promise<Blob> {
   );
 
   // ---- section sizes (all lengths must be written exactly) ----
-  // extra data = mask length (4) + blending ranges (4) + pascal name,
-  // padded so the whole layer record stays an even number of bytes
+  // extra data = mask length (4) + blending ranges (4) + pascal name
+  // (+ additional layer info blocks), padded so the whole layer record
+  // stays an even number of bytes
   const extraLengths = entries.map((e) => {
-    const base = 8 + pascalStringLength(e.name);
+    let base = 8 + pascalStringLength(e.name);
+    if (e.sectionType !== 0) base += 20; // '8BIM' + 'lsct' + len + 8-byte data
+    if (e.luni) base += 12 + e.luni.length; // '8BIM' + 'luni' + len + payload
     return base % 2 === 0 ? base : base + 1;
   });
-  // record = rect(16) + channelCount(2) + 4×channelInfo(24) + '8BIM'(4)
+  // record = rect(16) + channelCount(2) + 6×channelCount + '8BIM'(4)
   //        + blend(4) + opacity/clipping/flags/filler(4) + extraLength(4)
-  const recordLengths = entries.map((_, i) => 58 + extraLengths[i]);
+  const recordLengths = entries.map((e, i) => 34 + 6 * e.channels.length + extraLengths[i]);
   let channelDataTotal = 0;
   for (const e of entries) {
     for (const channel of e.channels) channelDataTotal += channelBlockLength(channel);
@@ -383,8 +502,8 @@ export async function exportPsd(doc: DocumentState): Promise<Blob> {
     out.i32(e.left);
     out.i32(e.top + e.height); // bottom
     out.i32(e.left + e.width); // right
-    out.u16(4); // channel count
-    for (let c = 0; c < 4; c += 1) {
+    out.u16(e.channels.length); // channel count (0 on section dividers)
+    for (let c = 0; c < e.channels.length; c += 1) {
       out.i16(PSD_CHANNEL_IDS[c]);
       out.u32(channelBlockLength(e.channels[c]));
     }
@@ -396,12 +515,21 @@ export async function exportPsd(doc: DocumentState): Promise<Blob> {
     out.u8(0); // filler
 
     // extra data: layer mask data + layer blending ranges + pascal name
+    // + additional layer info ('lsct' on dividers, 'luni' for non-Latin-1 names)
     const extra = new ByteWriter(64);
     extra.u32(0); // layer mask data length
     extra.u32(0); // layer blending ranges length
     extra.u8(e.name.length); // pascal length byte (excludes padding)
     extra.raw(e.name);
     while (extra.length < 8 + pascalStringLength(e.name)) extra.u8(0);
+    if (e.sectionType !== 0) {
+      // 'lsct' section divider — Photoshop's 8-byte form: u32 type + 4-byte filler
+      extra.ascii('8BIM').ascii('lsct').u32(8).u32(e.sectionType).u32(0);
+    }
+    if (e.luni) {
+      // 'luni' Unicode layer name — supersedes the pascal name on import
+      extra.ascii('8BIM').ascii('luni').u32(e.luni.length).raw(e.luni);
+    }
     if (extra.length % 2 !== 0) extra.u8(0); // keep the record even (defensive)
     out.u32(extra.length);
     out.raw(extra.finish());

@@ -16,6 +16,7 @@
 import { getFilter } from '../engine/filters/registry';
 import { applyAdjustments } from '../engine/adjustments';
 import { computeHistogram } from '../engine/color';
+import { inpaintRegion } from '../engine/inpaint';
 import type { FilterRequest, FilterResponse } from '../engine/types';
 
 export {};
@@ -36,6 +37,18 @@ self.onmessage = (event: MessageEvent<FilterRequest>): void => {
   const { jobId } = msg;
   try {
     switch (msg.type) {
+      case 'inpaint': {
+        // Content-aware fill: RGBA + hole mask both arrive transferred
+        // (zero-copy) and are posted straight back after mutation.
+        const data = new Uint8ClampedArray(msg.buffer);
+        const mask = new Uint8Array(msg.mask);
+        inpaintRegion(data, msg.width, msg.height, mask, { iterations: msg.iterations });
+        respond(
+          { type: 'inpaint', jobId, buffer: data.buffer, mask: mask.buffer },
+          [data.buffer, mask.buffer],
+        );
+        break;
+      }
       case 'ping': {
         respond({ type: 'pong', jobId });
         break;

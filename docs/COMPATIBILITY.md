@@ -15,7 +15,7 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 | BMP                      | ✅ Supported        | Standard uncompressed variants via browser decoder.                          |
 | SVG                      | ⚠️ Partial          | **Rasterized on import** (sanitized by re-drawing). Vector nodes are not editable after import. |
 | TIFF                     | ❌ Not supported    | Browsers ship no TIFF decoder; needs a custom decoder (planned — see below).  |
-| PSD (Photoshop)          | ⚠️ Partial          | **Import:** PSD v1, RGB, 8-bit (raw/RLE channel data) — layers with blend modes, opacity, visibility, offsets and names; text/shape/smart layers import as their stored raster pixels; flattened files fall back to the composite. Not supported: PSB, CMYK/grayscale/indexed/Lab, 16/32-bit, layer/vector masks, smart filters. **Export** to PSD is supported — see below. |
+| PSD (Photoshop)          | ⚠️ Partial          | **Import:** PSD v1, RGB, 8-bit (raw/RLE channel data) — layers with blend modes, opacity, visibility, offsets and names; **layer groups ('lsct' section dividers) are reconstructed as nested folders** (expanded state, group blend/opacity/visibility); Unicode layer names ('luni') are preferred; text/shape/smart layers import as their stored raster pixels; flattened files fall back to the composite. Not supported: PSB, CMYK/grayscale/indexed/Lab, 16/32-bit, layer/vector masks, smart filters, clipping stacks. **Export** to PSD is supported — see below. |
 | PDF                      | ❌ Not supported    | Out of scope for an image editor v1.                                          |
 | HEIC / HEIF              | ❌ Not supported    | Licensing + platform decoder variance; not bundled.                           |
 | AVIF                     | ❌ Not supported    | Deliberately not wired in this build even where platform decoders exist.      |
@@ -31,7 +31,7 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 | PNG    | ✅ Supported | Full alpha; recommended for lossless output.              |
 | JPEG   | ✅ Supported | Quality slider; alpha flattened onto background.          |
 | WebP   | ✅ Supported | Lossy/lossless per browser encoder support.               |
-| PSD    | ✅ Supported | RGB 8-bit, layers with blend modes/opacity/visibility/names; text/shape layers rasterized; masks & smart filters are not baked into layer pixels; 100% scale; opens in Photoshop/GIMP/Photopea. |
+| PSD    | ✅ Supported | RGB 8-bit, **layer groups written as 'lsct' section dividers (open/closed state, nested recursively)**, layers with blend modes/opacity/visibility/names (Unicode names via 'luni'); text/shape layers rasterized; masks, smart filters and clipping stacks are not baked into layer pixels; 100% scale; opens in Photoshop/GIMP/Photopea. |
 | `.pfs` | ✅ Supported | Native project (see below).                               |
 | TIFF   | ❌ Not supported | Same decoder rationale as import.                     |
 | PDF    | ❌ Not supported | —                                                     |
@@ -53,6 +53,12 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 | 16-bit / 32-bit float | ❌ Not supported yet — high-bit-depth files are converted to 8-bit on import |
 | ICC profile handling  | ❌ Minimal — color-managed conversion is future work                  |
 | Histograms / luma     | Rec.601 luma for grayscale & quick ops                               |
+
+## Editing features (honest scope)
+
+| Feature | Support | Notes |
+| ------- | ------- | ----- |
+| Content-aware fill | ⚠️ Partial | **Diffusion-based inpainting only** (onion-peel seeding + fixed-iteration Laplace smoothing, worker-powered, deterministic). Best on **smooth regions** — sky, skin, walls, gradients. It is **not** texture synthesis: structured textures (bricks, foliage, text, patterns) come out blurred, and large holes fill with smooth color, not detail. Feathered selections are filled at a hard 128/255 threshold. Alpha diffuses like RGB: opaque imagery stays opaque (255-boundary), while content on transparent layers is removed (transparency propagates inward). Exemplar/PatchMatch-based fill is future work. |
 
 ## Platform notes
 

@@ -15,6 +15,7 @@ import type { TranslationKey } from '../../i18n/dictionaries';
 import { toast } from '../../hooks/use-toast';
 import {
   clearSelectionRegion,
+  contentAwareFillCommand,
   copyActiveLayerToClipboard,
   cutActiveLayerToClipboard,
   dispatchFit,
@@ -64,6 +65,10 @@ export default function MenuBar({ openNumericPrompt }: MenuBarProps) {
   const gridVisible = useEditorStore((s) => s.settings.gridVisible);
   const beforeAfter = useEditorStore((s) => s.ui.beforeAfter);
   const hasSelection = useEditorStore((s) => s.selection !== null);
+  const activeRasterEditable = useEditorStore((s) => {
+    const layer = s.getActiveLayer();
+    return !!layer && layer.kind === 'raster' && !layer.locked;
+  });
 
   const store = useEditorStore;
   const getState = () => store.getState();
@@ -167,6 +172,13 @@ export default function MenuBar({ openNumericPrompt }: MenuBarProps) {
           >
             {t('color.bg')}
             {withShortcut('edit.fillBg')}
+          </MenubarItem>
+          <MenubarSeparator />
+          <MenubarItem
+            disabled={!hasSelection || !activeRasterEditable}
+            onClick={() => void contentAwareFillCommand()}
+          >
+            {t('edit.contentAwareFill')}
           </MenubarItem>
           <MenubarSeparator />
           <MenubarItem onClick={() => getState().setDialog('settings')}>{t('edit.preferences')}</MenubarItem>

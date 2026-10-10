@@ -366,12 +366,23 @@ export type FilterRequest =
       buffer: ArrayBuffer; // RGBA
     }
   | { type: 'histogram'; jobId: number; buffer: ArrayBuffer; precision: number }
+  | {
+      /** content-aware fill (selection-scoped diffusion inpainting, engine/inpaint) */
+      type: 'inpaint';
+      jobId: number;
+      width: number;
+      height: number;
+      iterations: number;
+      buffer: ArrayBuffer; // RGBA
+      mask: ArrayBuffer; // width*height bytes, >=128 = hole
+    }
   | { type: 'ping'; jobId: number };
 
 export type FilterResponse =
   | { type: 'filter'; jobId: number; buffer: ArrayBuffer }
   | { type: 'adjust'; jobId: number; buffer: ArrayBuffer }
   | { type: 'histogram'; jobId: number; luminance: number[]; r: number[]; g: number[]; b: number[]; max: number }
+  | { type: 'inpaint'; jobId: number; buffer: ArrayBuffer; mask: ArrayBuffer }
   | { type: 'pong'; jobId: number }
   | { type: 'error'; jobId: number; message: string };
 

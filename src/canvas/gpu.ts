@@ -79,6 +79,39 @@ export function mat3Apply(m: Mat3, x: number, y: number): { x: number; y: number
   return { x: m[0] * x + m[1] * y + m[2], y: m[3] * x + m[4] * y + m[5] };
 }
 
+/** In-place mat3Multiply: writes a·b into `out` (out must not alias a or b). */
+export function mat3MultiplyInto(a: Mat3, b: Mat3, out: Mat3): Mat3 {
+  out[0] = a[0] * b[0] + a[1] * b[3] + a[2] * b[6];
+  out[1] = a[0] * b[1] + a[1] * b[4] + a[2] * b[7];
+  out[2] = a[0] * b[2] + a[1] * b[5] + a[2] * b[8];
+  out[3] = a[3] * b[0] + a[4] * b[3] + a[5] * b[6];
+  out[4] = a[3] * b[1] + a[4] * b[4] + a[5] * b[7];
+  out[5] = a[3] * b[2] + a[4] * b[5] + a[5] * b[8];
+  out[6] = a[6] * b[0] + a[7] * b[3] + a[8] * b[6];
+  out[7] = a[6] * b[1] + a[7] * b[4] + a[8] * b[7];
+  out[8] = a[6] * b[2] + a[7] * b[5] + a[8] * b[8];
+  return out;
+}
+
+/** In-place viewToMat3: writes the doc→screen matrix into `out`. */
+export function viewToMat3Into(view: ViewState, out: Mat3): Mat3 {
+  const z = view.zoom;
+  const cos = view.rotation !== 0 ? Math.cos(view.rotation) : 1;
+  const sin = view.rotation !== 0 ? Math.sin(view.rotation) : 0;
+  const fx = view.flipX ? -1 : 1;
+  const fy = view.flipY ? -1 : 1;
+  out[0] = fx * cos * z;
+  out[1] = fx * -sin * z;
+  out[2] = fx * (cos * view.panX - sin * view.panY);
+  out[3] = fy * sin * z;
+  out[4] = fy * cos * z;
+  out[5] = fy * (sin * view.panX + cos * view.panY);
+  out[6] = 0;
+  out[7] = 0;
+  out[8] = 1;
+  return out;
+}
+
 /** Inverse of a 2D affine Mat3 (linear part must be non-singular). */
 export function mat3Inverse(m: Mat3): Mat3 {
   const a = m[0], b = m[1], tx = m[2];
@@ -160,6 +193,44 @@ export function isWebGPUAvailable(): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/* diagnostics (About dialog) — honest, cheap counters                 */
+/* ------------------------------------------------------------------ */
+
+export interface GpuDiagnostics {
+  /** createGpuRenderer() calls since module load */
+  attempted: number;
+  /** renderers currently alive (created − destroyed) */
+  active: number;
+  /** GPU objects (texture, uniform buffers, device) destroyed via destroy() */
+  destroyedResources: number;
+  /** last failure/device-loss reason ('' when healthy) */
+  lastError: string;
+}
+
+const gpuDiagnostics: GpuDiagnostics = {
+  attempted: 0,
+  active: 0,
+  destroyedResources: 0,
+  lastError: '',
+};
+
+/** Pure snapshot of the GPU display-path counters (About dialog). */
+export function getGpuDiagnostics(): GpuDiagnostics {
+  return { ...gpuDiagnostics };
+}
+
+/**
+ * Pure limits guard: a composite larger than the device's max 2D texture
+ * dimension can never be uploaded — callers must fall back to Canvas2D
+ * instead of looping on failed texture creation. Undefined-safe: an unknown
+ * limit (spec-wise it always exists, but be defensive) never trips.
+ */
+export function exceedsMaxTextureDimension(width: number, height: number, maxDimension2D: number | undefined): boolean {
+  if (typeof maxDimension2D !== 'number' || !Number.isFinite(maxDimension2D)) return false;
+  return width > maxDimension2D || height > maxDimension2D;
+}
+
+/* ------------------------------------------------------------------ */
 /* minimal structural WebGPU types (no @webgpu/types dependency)       */
 /* ------------------------------------------------------------------ */
 
@@ -212,6 +283,8 @@ interface GpuDeviceLike {
   lost: Promise<GpuDeviceLostInfoLike>;
   queue: GpuQueueLike;
   destroy(): void;
+  /** Present on real adapters; kept optional so tests/stubs stay honest. */
+  readonly limits?: { readonly maxTextureDimension2D?: number };
   createCommandEncoder(): GpuCommandEncoderLike;
   createShaderModule(desc: { code: string }): GpuShaderModuleLike;
   createRenderPipeline(desc: {
@@ -384,6 +457,30 @@ export interface GpuRenderer {
 export interface GpuRendererOptions {
   /** Fired when the device is lost — the stage falls back to Canvas2D. */
   onDeviceLost?: (reason: string) => void;
+  /**
+   * Fired for permanent, non-recoverable failures that must NOT retry
+   * (e.g. document dimensions above device.limits.maxTextureDimension2D).
+   * The renderer destroys itself right after reporting.
+   */
+  onFatalError?: (reason: string) => void;
+}
+
+/**
+ * Bounds a device request so a hung adapter/device probe cannot stall the
+ * stage past the Canvas2D fallback window. The losing promise cannot be
+ * cancelled (no WebGPU cancellation API) — its late result is simply
+ * dropped and garbage-collected; no renderer is ever constructed from it.
+ */
+const INIT_TIMEOUT_MS = 8000;
+
+function withInitTimeout<T>(pending: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([pending, timeout]).finally(() => {
+    if (timer !== null) clearTimeout(timer);
+  });
 }
 
 /**
@@ -400,25 +497,41 @@ export async function createGpuRenderer(
   canvas: HTMLCanvasElement,
   options: GpuRendererOptions = {},
 ): Promise<GpuRenderer | null> {
+  gpuDiagnostics.attempted++;
   try {
-    if (!isWebGPUAvailable()) return null;
+    if (!isWebGPUAvailable()) {
+      gpuDiagnostics.lastError = 'unavailable';
+      return null;
+    }
     const gpu = (navigator as Navigator & { gpu?: GpuLike }).gpu;
-    if (!gpu) return null;
-
-    const adapter = await gpu.requestAdapter();
-    if (!adapter) return null;
-    const device = await adapter.requestDevice();
-
-    const context = canvas.getContext('webgpu') as GpuCanvasContextLike | null;
-    if (!context) {
-      device.destroy();
+    if (!gpu) {
+      gpuDiagnostics.lastError = 'unavailable';
       return null;
     }
 
-    const format = gpu.getPreferredCanvasFormat();
-    context.configure({ device, format, alphaMode: 'premultiplied' });
+    const adapter = await withInitTimeout(gpu.requestAdapter(), INIT_TIMEOUT_MS);
+    if (!adapter) {
+      gpuDiagnostics.lastError = 'adapter-unavailable';
+      return null;
+    }
+    const device = await withInitTimeout(adapter.requestDevice(), INIT_TIMEOUT_MS);
+    if (!device) {
+      gpuDiagnostics.lastError = 'device-unavailable';
+      return null;
+    }
 
-    const shaderModule = device.createShaderModule({ code: SHADER_CODE });
+    try {
+      const context = canvas.getContext('webgpu') as GpuCanvasContextLike | null;
+      if (!context) {
+        device.destroy();
+        gpuDiagnostics.lastError = 'context-unavailable';
+        return null;
+      }
+
+      const format = gpu.getPreferredCanvasFormat();
+      context.configure({ device, format, alphaMode: 'premultiplied' });
+
+      const shaderModule = device.createShaderModule({ code: SHADER_CODE });
 
     // premultiplied source-over: texture is uploaded premultiplied
     const blend = {
@@ -452,26 +565,39 @@ export async function createGpuRenderer(
     const linearSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressMode: 'clamp-to-edge' });
     const nearestSampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest', addressMode: 'clamp-to-edge' });
 
-    const renderer = new WebGpuDisplayRenderer(
-      canvas,
-      context,
-      device,
-      format,
-      checkerPipeline,
-      texPipeline,
-      checkerUniforms,
-      texUniforms,
-      linearSampler,
-      nearestSampler,
-    );
+      const renderer = new WebGpuDisplayRenderer(
+        canvas,
+        context,
+        device,
+        format,
+        checkerPipeline,
+        texPipeline,
+        checkerUniforms,
+        texUniforms,
+        linearSampler,
+        nearestSampler,
+        options.onFatalError ?? null,
+      );
 
-    device.lost.then((info) => {
-      if (renderer.isDestroyed()) return;
-      options.onDeviceLost?.(info?.reason ?? 'unknown');
-    });
+      device.lost.then((info) => {
+        if (renderer.isDestroyed()) return;
+        gpuDiagnostics.lastError = `device-lost:${info?.reason ?? 'unknown'}`;
+        options.onDeviceLost?.(info?.reason ?? 'unknown');
+      });
 
-    return renderer;
-  } catch {
+      gpuDiagnostics.active++;
+      gpuDiagnostics.lastError = '';
+      return renderer;
+    } catch (err) {
+      // Any throw after the device was obtained must not leak it.
+      try {
+        device.destroy();
+      } catch { /* already lost */ }
+      gpuDiagnostics.lastError = err instanceof Error ? err.message : 'init-failed';
+      return null;
+    }
+  } catch (err) {
+    gpuDiagnostics.lastError = err instanceof Error ? err.message : 'init-failed';
     return null;
   }
 }
@@ -483,6 +609,18 @@ class WebGpuDisplayRenderer implements GpuRenderer {
   private textureView: GpuTextureViewLike | null = null;
   private bindLinear: GpuBindGroupLike | null = null;
   private bindNearest: GpuBindGroupLike | null = null;
+  /** checker bind group only references the (fixed) uniform buffer — built once */
+  private checkerBind: GpuBindGroupLike | null = null;
+
+  /* per-frame scratch — the rAF loop never allocates matrices or uniform views */
+  private readonly checkerScratch = new Float32Array(20);
+  private readonly texScratch = new Float32Array(16);
+  private readonly viewScratch: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  private readonly prodScratch: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  private readonly ndcScratch: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  private ndcWidth = -1;
+  private ndcHeight = -1;
+  private onFatal: ((reason: string) => void) | null;
   /** identity of the last uploaded composite canvas */
   private uploadedSource: AnyCanvas | null = null;
   private uploadedVersion = -1;
@@ -501,7 +639,10 @@ class WebGpuDisplayRenderer implements GpuRenderer {
     private texUniforms: GpuBufferLike,
     private linearSampler: GpuSamplerLike,
     private nearestSampler: GpuSamplerLike,
-  ) {}
+    onFatal: ((reason: string) => void) | null,
+  ) {
+    this.onFatal = onFatal;
+  }
 
   isDestroyed(): boolean {
     return this.dead;
@@ -532,7 +673,7 @@ class WebGpuDisplayRenderer implements GpuRenderer {
       this.ensureTexture(source, params);
       if (!this.texture) return;
 
-      const ndc = ndcFromCss(params.width, params.height);
+      const ndc = this.ndcFor(params.width, params.height);
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [
@@ -547,7 +688,7 @@ class WebGpuDisplayRenderer implements GpuRenderer {
 
       // 1. checkerboard over the document's screen bbox
       if (params.checkerBBox.w > 0 && params.checkerBBox.h > 0) {
-        const u = new Float32Array(20);
+        const u = this.checkerScratch;
         mat3ToWgsl(ndc, u, 0); // css → NDC directly (bbox is in CSS px)
         u[12] = params.checkerBBox.x;
         u[13] = params.checkerBBox.y;
@@ -562,8 +703,9 @@ class WebGpuDisplayRenderer implements GpuRenderer {
 
       // 2. composite quad under the doc→screen→NDC transform
       if (params.docWidth > 0 && params.docHeight > 0) {
-        const m = mat3Multiply(ndc, viewToMat3(params.view));
-        const u = new Float32Array(16);
+        const view = viewToMat3Into(params.view, this.viewScratch);
+        const m = mat3MultiplyInto(ndc, view, this.prodScratch);
+        const u = this.texScratch;
         mat3ToWgsl(m, u, 0);
         u[12] = params.docWidth;
         u[13] = params.docHeight;
@@ -584,27 +726,69 @@ class WebGpuDisplayRenderer implements GpuRenderer {
   destroy(): void {
     if (this.dead) return;
     this.dead = true;
+    let destroyed = 0;
     try {
-      this.texture?.destroy();
+      if (this.texture) {
+        this.texture.destroy();
+        destroyed++;
+      }
     } catch { /* already destroyed */ }
     try {
       this.checkerUniforms.destroy();
+      destroyed++;
+    } catch { /* already destroyed */ }
+    try {
       this.texUniforms.destroy();
+      destroyed++;
     } catch { /* already destroyed */ }
     try {
       this.context.unconfigure();
     } catch { /* already unconfigured */ }
     try {
       this.device.destroy();
+      destroyed++;
     } catch { /* already lost */ }
+    this.texture = null;
+    this.textureView = null;
+    this.bindLinear = null;
+    this.bindNearest = null;
+    this.checkerBind = null;
+    gpuDiagnostics.active--;
+    gpuDiagnostics.destroyedResources += destroyed;
+  }
+
+  /** One-shot permanent failure: report, self-destruct, never render again. */
+  private fatal(reason: string): void {
+    if (this.dead) return;
+    gpuDiagnostics.lastError = reason;
+    const report = this.onFatal;
+    this.destroy();
+    report?.(reason);
   }
 
   private configure(): void {
     this.context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
   }
 
+  /** NDC matrix for the CSS viewport, recomputed only when the size changes. */
+  private ndcFor(width: number, height: number): Mat3 {
+    if (this.ndcWidth !== width || this.ndcHeight !== height) {
+      const ndc = ndcFromCss(width, height);
+      for (let i = 0; i < 9; i++) this.ndcScratch[i] = ndc[i];
+      this.ndcWidth = width;
+      this.ndcHeight = height;
+    }
+    return this.ndcScratch;
+  }
+
   /** Re-uploads the composite only when it is new, resized or revised. */
   private ensureTexture(source: AnyCanvas, params: GpuRenderParams): void {
+    // Documents above the device's max 2D texture dimension can never be
+    // uploaded — fall back to Canvas2D once instead of failing every frame.
+    if (exceedsMaxTextureDimension(params.docWidth, params.docHeight, this.device.limits?.maxTextureDimension2D)) {
+      this.fatal(`texture-dimension-limit:${Math.max(params.docWidth, params.docHeight)}`);
+      return;
+    }
     const dimsChanged =
       !this.texture || this.uploadedWidth !== params.docWidth || this.uploadedHeight !== params.docHeight;
     const contentChanged =
@@ -612,9 +796,12 @@ class WebGpuDisplayRenderer implements GpuRenderer {
     if (!dimsChanged && !contentChanged) return;
 
     if (dimsChanged) {
-      try {
-        this.texture?.destroy();
-      } catch { /* already destroyed */ }
+      if (this.texture) {
+        try {
+          this.texture.destroy();
+          gpuDiagnostics.destroyedResources++;
+        } catch { /* already destroyed */ }
+      }
       this.texture = this.device.createTexture({
         size: [Math.max(1, params.docWidth), Math.max(1, params.docHeight)],
         format: 'rgba8unorm',
@@ -639,10 +826,16 @@ class WebGpuDisplayRenderer implements GpuRenderer {
   }
 
   private checkerBindGroup(): GpuBindGroupLike {
-    return this.device.createBindGroup({
-      layout: this.checkerPipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: this.checkerUniforms } }],
-    });
+    // The checker bind group references only the fixed uniform buffer and the
+    // pipeline's auto layout — both live for the renderer's lifetime, so it is
+    // built once instead of churned per frame.
+    if (!this.checkerBind) {
+      this.checkerBind = this.device.createBindGroup({
+        layout: this.checkerPipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: this.checkerUniforms } }],
+      });
+    }
+    return this.checkerBind;
   }
 
   private texBindGroup(nearest: boolean): GpuBindGroupLike {

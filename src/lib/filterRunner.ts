@@ -14,6 +14,7 @@ import type { AdjustmentSpec, FilterRequest, FilterResponse } from '../engine/ty
 import { getFilter } from '../engine/filters/registry';
 import { applyAdjustments } from '../engine/adjustments';
 import { computeHistogram, type HistogramResult } from '../engine/color';
+import { inpaintRegion, DEFAULT_INPAINT_ITERATIONS } from '../engine/inpaint';
 
 interface PendingJob {
   resolve: (response: FilterResponse) => void;
@@ -127,6 +128,38 @@ export function runHistogram(imageData: ImageData, precision = 256): Promise<His
   });
 }
 
+/**
+ * Content-aware fill (see engine/inpaint): diffuses the masked hole pixels
+ * of a COPY of `imageData` (holes where `mask >= 128`). Both the pixel buffer
+ * and the mask are cloned before being transferred, so the caller's ImageData
+ * and mask are never detached or mutated. Falls back to synchronous in-thread
+ * execution when Workers are unavailable.
+ */
+export function runInpaint(imageData: ImageData, mask: Uint8Array, iterations?: number): Promise<ImageData> {
+  const { width, height } = imageData;
+  if (mask.length < width * height) return Promise.reject(new Error('Inpaint mask smaller than image'));
+  const buffer = cloneBuffer(imageData);
+  const maskCopy = mask.slice(); // own buffer — the transfer must not detach the caller's mask
+  const w = ensureWorker();
+  if (!w) return syncInpaint(buffer, maskCopy, width, height, iterations);
+  const jobId = nextJobId++;
+  return send(
+    {
+      type: 'inpaint',
+      jobId,
+      width,
+      height,
+      iterations: iterations ?? DEFAULT_INPAINT_ITERATIONS,
+      buffer,
+      mask: maskCopy.buffer as ArrayBuffer,
+    },
+    [buffer, maskCopy.buffer as ArrayBuffer],
+  ).then((response) => {
+    if (response.type !== 'inpaint') throw new Error('Unexpected worker response');
+    return toImageData(response.buffer, width, height);
+  });
+}
+
 /** Terminates the worker and rejects anything still in flight. */
 export function disposeRunner(): void {
   failAllPending(new Error('Filter runner disposed'));
@@ -169,6 +202,24 @@ function syncAdjust(buffer: ArrayBuffer, width: number, height: number, specs: A
     const data = new Uint8ClampedArray(buffer);
     try {
       applyAdjustments(data, specs);
+      resolve(toImageData(data.buffer, width, height));
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+function syncInpaint(
+  buffer: ArrayBuffer,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  iterations: number | undefined,
+): Promise<ImageData> {
+  return new Promise((resolve, reject) => {
+    const data = new Uint8ClampedArray(buffer);
+    try {
+      inpaintRegion(data, width, height, mask, { iterations });
       resolve(toImageData(data.buffer, width, height));
     } catch (err) {
       reject(err instanceof Error ? err : new Error(String(err)));

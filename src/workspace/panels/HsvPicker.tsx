@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { useI18n } from '../../i18n';
@@ -74,14 +75,27 @@ export function hexToHsv(hex: string): Hsv | null {
 interface HsvPickerProps {
   value: string;
   onChange: (hex: string) => void;
+  /** Fired once per interaction END (drag release / slider commit / hex enter) — not per move. */
+  onCommit?: (hex: string) => void;
 }
 
-export function HsvPicker({ value, onChange }: HsvPickerProps) {
+export function HsvPicker({ value, onChange, onCommit }: HsvPickerProps) {
   const { t } = useI18n();
   const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(value) ?? { h: 0, s: 0, v: 0 });
   const [hexText, setHexText] = useState(value);
   const draggingRef = useRef(false);
   const squareRef = useRef<HTMLDivElement | null>(null);
+  /** hex at drag start — the SV square commits only when the color changed */
+  const commitStartRef = useRef<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
 
   // sync when the color changes externally (eyedropper, swatches, swap)
   useEffect(() => {
@@ -109,17 +123,41 @@ export function HsvPicker({ value, onChange }: HsvPickerProps) {
 
   const hex = hsvToHex(hsv);
 
+  const copyHex = (): void => {
+    try {
+      void navigator.clipboard?.writeText(hex.toUpperCase()).catch(() => {});
+      setCopied(true);
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // clipboard unavailable (insecure context / denied permission) — silent
+    }
+  };
+
+  /** Commits the hex text field (blur / Enter): invalid text reverts silently. */
+  const commitHexText = (): void => {
+    const parsed = hexToHsv(hexText);
+    if (parsed) {
+      const next = hsvToHex(parsed);
+      if (next !== hex) onCommit?.(next);
+      commitHsv(parsed);
+    } else {
+      setHexText(hex);
+    }
+  };
+
   return (
     <div className="flex w-full flex-col gap-2.5">
       <div
         ref={squareRef}
-        aria-label={t('color.swatches')}
+        aria-label={t('color.svArea')}
         className="relative h-36 w-full cursor-crosshair touch-none select-none rounded-md border border-border"
         style={{
           background: `linear-gradient(to top, #000, rgba(0,0,0,0)), linear-gradient(to right, #fff, hsl(${hsv.h} 100% 50%))`,
         }}
         onPointerDown={(e) => {
           draggingRef.current = true;
+          commitStartRef.current = hsvToHex(hsv);
           e.currentTarget.setPointerCapture(e.pointerId);
           pointToSv(e.clientX, e.clientY);
         }}
@@ -128,6 +166,9 @@ export function HsvPicker({ value, onChange }: HsvPickerProps) {
         }}
         onPointerUp={(e) => {
           draggingRef.current = false;
+          const started = commitStartRef.current;
+          commitStartRef.current = null;
+          if (started !== null && started !== hsvToHex(hsv)) onCommit?.(hsvToHex(hsv));
           e.currentTarget.releasePointerCapture(e.pointerId);
         }}
         onPointerCancel={() => {
@@ -142,43 +183,49 @@ export function HsvPicker({ value, onChange }: HsvPickerProps) {
 
       <div className="flex items-center gap-2">
         <span className="w-3 shrink-0 text-[11px] text-muted-foreground">{t('color.hue')}</span>
-        <div
-          className="relative h-3.5 flex-1 rounded-full"
-          style={{
-            background: 'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)',
-          }}
-        >
+        <div className="relative flex h-11 flex-1 items-center">
+          <div
+            className="h-3.5 w-full rounded-full"
+            style={{
+              background:
+                'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)',
+            }}
+          />
           <Slider
             value={[Math.round(hsv.h)]}
             min={0}
             max={360}
             step={1}
             onValueChange={(v) => commitHsv({ ...hsv, h: v[0] ?? 0 })}
+            onValueCommit={() => onCommit?.(hsvToHex(hsv))}
             className="absolute inset-0 [&_[data-slot=slider-track]]:bg-transparent"
             aria-label={t('color.hue')}
           />
         </div>
       </div>
 
-      <Input
-        value={hexText}
-        onChange={(e) => setHexText(e.target.value)}
-        onBlur={() => {
-          const parsed = hexToHsv(hexText);
-          if (parsed) commitHsv(parsed);
-          else setHexText(hsvToHex(hsv));
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            const parsed = hexToHsv(hexText);
-            if (parsed) commitHsv(parsed);
-            else setHexText(hsvToHex(hsv));
-          }
-        }}
-        className="pf-num h-7 font-mono text-xs uppercase"
-        aria-label={t('color.hex')}
-        spellCheck={false}
-      />
+      <div className="flex items-center gap-1.5">
+        <Input
+          value={hexText}
+          onChange={(e) => setHexText(e.target.value)}
+          onBlur={commitHexText}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitHexText();
+          }}
+          className="pf-num h-7 min-w-0 flex-1 font-mono text-xs uppercase"
+          aria-label={t('color.hex')}
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          aria-label={copied ? t('color.copied') : t('color.copyHex')}
+          title={copied ? t('color.copied') : t('color.copyHex')}
+          onClick={copyHex}
+          className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+      </div>
     </div>
   );
 }

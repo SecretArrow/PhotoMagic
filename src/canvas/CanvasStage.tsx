@@ -46,7 +46,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '../state/editorStore';
 import type { ToolOptions } from '../state/types';
 import type { DocumentState, Selection, ToolId, ViewState } from '../engine/types';
-import { composeDocument, publishSharedComposite } from '../engine/render';
+import { clearThumbnailCaches, composeDocument, publishSharedComposite } from '../engine/render';
 import { makeCanvas, paintChecker, type AnyCanvas } from '../engine/raster';
 import {
   docToScreen,
@@ -360,6 +360,7 @@ export default function CanvasStage() {
 
     /* WebGPU display path state for THIS effect run (see gpu.ts) */
     const gpuBackend = gpuStage;
+    if (!gpuBackend) setDisplayBackend('canvas2d'); // keep the status chip honest on live swaps
     let gpuRenderer: GpuRenderer | null = null;
     let gpuDisposed = false; // effect cleanup ran → late init must self-destroy
     let gpuDead = false; // fallback triggered (init failure / device loss)
@@ -432,9 +433,20 @@ export default function CanvasStage() {
           setGpuStage(false); // re-key the canvas; this effect re-runs on Canvas2D
         };
         const gpuTimeout = window.setTimeout(() => fallbackToCanvas2d('timeout'), 8000);
-        createGpuRenderer(gpuCanvas, { onDeviceLost: fallbackToCanvas2d })
+        createGpuRenderer(gpuCanvas, {
+          onDeviceLost: fallbackToCanvas2d,
+          // permanent limits failure (doc > device maxTextureDimension2D):
+          // the renderer already destroyed itself — pin the Canvas2D fallback
+          onFatalError: fallbackToCanvas2d,
+        })
           .then((renderer) => {
             window.clearTimeout(gpuTimeout);
+            if (gpuDead) {
+              // fallback already fired (timeout / device lost / fatal limits):
+              // the late-resolving init must never resurrect the GPU path
+              renderer?.destroy();
+              return;
+            }
             if (gpuDisposed) {
               renderer?.destroy();
               return;
@@ -694,7 +706,10 @@ export default function CanvasStage() {
         }
       }
       if (s.doc.id !== prev.doc.id) {
-        // a different document was loaded → fresh fit-on-load
+        // a different document was loaded → drop the previous document's
+        // thumbnail caches (per-layer entries would otherwise linger, and the
+        // mask cache holds strong canvas refs) and start a fresh fit-on-load
+        clearThumbnailCaches();
         interactedRef.current = false;
         const { w, h } = sizeRef.current;
         if (w > 0 && h > 0) s.fitToScreen(w, h);

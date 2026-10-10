@@ -16,6 +16,7 @@ PixelForge Studio is a client-side image editor with a Photoshop-style workflow 
 - **Text** — point and paragraph text with font, weight, style, alignment, letter spacing and line height
 - **Shapes** — rectangles (rounded), ellipses, lines, polygons, stars and pen paths, with fills, strokes and smart-vector re-editing
 - **Selections** — rectangular/elliptical marquees, lasso, polygonal lasso, magic wand (contiguous + global), add/subtract/intersect modes, feather, grow/contract, border, invert
+- **Content-aware fill (diffusion inpainting)** — Edit ▸ Content-aware fill fills the selection from its surroundings; best on smooth areas (see `docs/COMPATIBILITY.md` for the honest scope)
 - **Transforms** — move, scale, rotate, flip, crop, canvas resize with per-layer content
 - **History** — memory-aware undo/redo (384 MB budget, 200 entries) with a browsable history panel and jump-to-state
 - **Autosave & recovery** — periodic snapshot to IndexedDB, save-on-hide, and crash recovery of the last safe state
@@ -93,7 +94,7 @@ docs/          # architecture, compatibility matrix, licenses
 
 - **WebGPU render backend** — **partially shipped**: an optional WebGPU *display* path presents the composed document as a GPU quad (texture uploads only on content changes; automatic, permanent Canvas 2D fallback wherever WebGPU is unavailable). The compose/filter pipeline itself is still Canvas2D — full GPU composition is future work (see `docs/ARCHITECTURE.md`).
 - **TIFF import** — not supported yet; TIFF files must be converted first (layered **PSD import is supported** — see `docs/COMPATIBILITY.md`).
-- **Content-aware fill** — not implemented; healing/clone tools exist, but inpainting-style fill is future work.
+- **Content-aware fill** — **partially shipped (v1 diffusion inpainting)**: Edit ▸ Content-aware fill diffuses the selection from its boundary (worker-powered, deterministic). Honest scope: smooth regions (sky, skin, walls, gradients) — it is **not** texture synthesis, so structured textures come out blurred. PatchMatch/exemplar-based fill remains future work.
 
 ## Privacy
 

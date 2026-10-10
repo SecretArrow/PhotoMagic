@@ -5,6 +5,8 @@
  */
 
 import { APP_VERSION } from '../../engine/document';
+import { getDisplayBackend } from '../../canvas/gpu';
+import { HISTORY_MAX_ENTRIES, HISTORY_MEMORY_BUDGET } from '../../history';
 import { useI18n } from '../../i18n';
 import {
   Dialog,
@@ -20,7 +22,7 @@ export default function AboutDialog({ open, onOpenChange }: WorkspaceDialogProps
   const { t } = useI18n();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-h-[85dvh] max-w-sm overflow-y-auto pf-scroll">
         <DialogHeader>
           <DialogTitle>{t('dialog.about.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t('dialog.about.title')}</DialogDescription>
@@ -34,6 +36,27 @@ export default function AboutDialog({ open, onOpenChange }: WorkspaceDialogProps
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">{t('dialog.about.body')}</p>
           <Separator />
+          <div className="w-full text-left">
+            <p className="mb-1 text-[11px] font-semibold text-foreground">{t('about.underTheHood')}</p>
+            <ul className="flex flex-col gap-1 text-[11px] leading-relaxed text-muted-foreground">
+              <li>{t('about.privacy')}</li>
+              <li>
+                {t('about.renderer', {
+                  backend:
+                    getDisplayBackend() === 'webgpu'
+                      ? t('status.rendererWebgpu')
+                      : t('status.rendererCanvas2d'),
+                })}
+              </li>
+              <li>{t('about.workers', { count: typeof Worker !== 'undefined' ? 1 : 0 })}</li>
+              <li>
+                {t('about.memory', {
+                  mb: Math.round(HISTORY_MEMORY_BUDGET / (1024 * 1024)),
+                  count: HISTORY_MAX_ENTRIES,
+                })}
+              </li>
+            </ul>
+          </div>
           <p className="text-[10px] text-muted-foreground/80">{t('dialog.about.license')}</p>
         </div>
       </DialogContent>

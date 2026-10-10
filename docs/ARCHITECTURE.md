@@ -67,11 +67,18 @@ Stack behavior:
 
 - `HISTORY_MAX_ENTRIES = 200`, `HISTORY_MEMORY_BUDGET = 384 MB`.
 - Pushing drops the redo tail (branches are not kept).
-- Trimming drops oldest entries beyond the current position first, then oldest overall — the newest entry is never trimmed.
+- Trimming drops the oldest entry repeatedly until the stack fits the byte budget (the position shifts left with every drop; redo-tail entries go last — dropping a redo entry only shortens the redo walk, it never re-applies state). The newest entry is never trimmed.
 - `undo`/`redo` call the entry's closures; `jumpTo(i)` walks with undo/redo so the history panel can jump to any state.
 - `historyBytes(stack)` reports the current memory estimate for the history panel/UI.
 
 Entries are self-contained (id, kind, i18n `labelKey` + `labelFallback`, timestamp, byte estimate, `undo()`/`redo()`), so the history panel renders without knowing what produced them.
+
+### Memory model
+
+- **Typed arrays, transferred once** — every buffer sent to the filter worker is cloned from the source `ImageData` and then *transferred* (`postMessage(request, [buffer])`), so the main thread never holds a second copy and the source is never detached (`src/lib/filterRunner.ts`); the worker adopts the buffer zero-copy and transfers it back. There is no WebAssembly in the pipeline — all filters are plain TypeScript running in the worker (or synchronously in-thread when Workers are unavailable).
+- **History budgets are enforced** — `HISTORY_MEMORY_BUDGET = 384 MB` and `HISTORY_MAX_ENTRIES = 200` are checked on every push: the byte budget drops the oldest entry repeatedly until the stack fits (newest entry always kept), so the resident undo stack can never exceed the budget by more than one entry.
+- **Thumbnail caches are bounded and cleared per document** — layer/mask thumbnails are cached per layer id (one entry per layer, bounded by the document). `clearThumbnailCaches()` — called by the canvas stage when the active document id changes — drops all per-layer entries, including the strong mask-canvas references, so switching documents cannot leak a previous document's pixels.
+- **GPU resources are destroyed on every path** — each composite re-upload destroys the previous texture before creating the next; `destroy()` releases the texture + uniform buffers, unconfigures the context and destroys the device; a late-resolving init after fallback/device-loss self-destroys via the `isDestroyed()` guard; documents above `device.limits.maxTextureDimension2D` permanently fall back to Canvas2D instead of failing on every frame. `getGpuDiagnostics()` exposes honest counters (`attempted` / `active` / `destroyedResources` / `lastError`) for the About dialog.
 
 ## 5. Worker protocol
 

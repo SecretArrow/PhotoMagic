@@ -397,6 +397,20 @@ export function maskThumbnail(layer: Layer, revision: number, size = 44): string
 /* shared composite (viewport + navigator preview)                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Drops every per-layer cache entry (thumbnails, mask thumbnails, pixel
+ * versions). The caches are keyed by layer id only, so a different
+ * document's entries — including strong references to its mask canvases —
+ * would otherwise linger for the whole session. Called by the canvas stage
+ * whenever the active document id changes; the new document's thumbnails
+ * simply regenerate on the next layers-panel render.
+ */
+export function clearThumbnailCaches(): void {
+  pixelVersions.clear();
+  thumbCache.clear();
+  maskThumbCache.clear();
+}
+
 let sharedComposite: { doc: DocumentState; canvas: AnyCanvas } | null = null;
 
 /** Publishes the viewport's cached composite so cheap consumers (navigator
