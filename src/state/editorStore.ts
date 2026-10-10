@@ -127,6 +127,7 @@ const defaultSettings: EditorSettings = {
   theme: 'dark',
   checkerSize: 8,
   showToasts: true,
+  renderer: 'auto',
 };
 
 const defaultView: ViewState = { zoom: 1, panX: 0, panY: 0, rotation: 0, flipX: false, flipY: false };

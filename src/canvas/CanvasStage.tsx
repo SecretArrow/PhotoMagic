@@ -17,6 +17,15 @@
  * any mark, pointer or store event restarts it — no 60 fps polling while idle.
  * The ants animation invalidates the overlay at ~15 fps while a selection exists.
  *
+ * Display backend (settings.renderer): 'canvas2d' composes/presents on a 2D
+ * context; 'auto' presents the cached composite through the optional WebGPU
+ * path (src/canvas/gpu.ts) when the browser exposes navigator.gpu — the
+ * composite texture uploads only on revision changes, so pan/zoom/resize
+ * re-present without touching pixels. The overlay canvas is always Canvas2D.
+ * Any GPU init/device failure permanently falls back to Canvas2D for this
+ * mount (the display <canvas> element is re-keyed; one element can never
+ * carry both context types).
+ *
  * Draw matrix: scale(flip) → rotate → translate(pan) → scale(zoom). Canvas
  * transforms apply outermost-first, so this yields exactly
  *   screen = F·R·T(pan)·S(zoom)·doc = docToScreen(doc)
@@ -33,7 +42,7 @@
  *   - 'pf:fit' window event → fit document to the viewport
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '../state/editorStore';
 import type { ToolOptions } from '../state/types';
 import type { DocumentState, Selection, ToolId, ViewState } from '../engine/types';
@@ -47,6 +56,13 @@ import {
   type ToolContext,
 } from './pointerContract';
 import { getToolController } from '../tools/registry';
+import {
+  createGpuRenderer,
+  isWebGPUAvailable,
+  resolveDisplayBackend,
+  setDisplayBackend,
+  type GpuRenderer,
+} from './gpu';
 
 /* ------------------------------------------------------------------ */
 /* constants                                                           */
@@ -233,7 +249,15 @@ export default function CanvasStage() {
   const tool = useEditorStore((s) => s.tool);
   const selection = useEditorStore((s) => s.selection);
   const settings = useEditorStore((s) => s.settings);
+  const rendererSetting = settings.renderer;
   const toolOptions = useEditorStore((s) => s.toolOptions);
+
+  /* display backend: false = Canvas2D, true = WebGPU display canvas mounted.
+   * The canvas element is re-keyed on swap — one element cannot carry both
+   * context types, so React recreates it when the backend changes. */
+  const [gpuStage, setGpuStage] = useState(false);
+  /** permanent Canvas2D fallback for this mount once WebGPU failed/lost */
+  const gpuFailedRef = useRef(false);
 
   /* dom refs */
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -317,6 +341,12 @@ export default function CanvasStage() {
     markAll();
   }, [settings, markAll]);
 
+  /* renderer setting → display backend (swaps live; once WebGPU init fails
+   * the gpuFailedRef mount never retries — permanent Canvas2D fallback) */
+  useEffect(() => {
+    setGpuStage(resolveDisplayBackend(rendererSetting, isWebGPUAvailable(), gpuFailedRef.current) === 'webgpu');
+  }, [rendererSetting]);
+
   useEffect(() => {
     markOverlay();
   }, [toolOptions, markOverlay]);
@@ -327,6 +357,16 @@ export default function CanvasStage() {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    /* WebGPU display path state for THIS effect run (see gpu.ts) */
+    const gpuBackend = gpuStage;
+    let gpuRenderer: GpuRenderer | null = null;
+    let gpuDisposed = false; // effect cleanup ran → late init must self-destroy
+    let gpuDead = false; // fallback triggered (init failure / device loss)
+
+    /* the display <canvas> may have been re-keyed (backend swap) — the old
+     * 2D context must not leak into the new element */
+    displayCtxRef.current = null;
 
     const refreshRect = (): void => {
       rectRef.current = container.getBoundingClientRect();
@@ -373,17 +413,86 @@ export default function CanvasStage() {
       if (!overlayCtxRef.current && overlayRef.current) {
         overlayCtxRef.current = overlayRef.current.getContext('2d');
       }
+      if (gpuBackend && gpuRenderer) gpuRenderer.resize(w, h, dpr);
     };
+
+    /* ---------- WebGPU display init (fails → permanent Canvas2D) ----------
+     * Runs while the gpu-keyed canvas is mounted; first frames stay blank
+     * until the device/context resolve, then the display repaints. */
+    if (gpuBackend && !gpuFailedRef.current) {
+      const gpuCanvas = displayRef.current;
+      if (gpuCanvas) {
+        const fallbackToCanvas2d = (reason: string): void => {
+          void reason; // silent by design — headless/old browsers land here
+          if (gpuDead) return;
+          gpuDead = true;
+          gpuRenderer = null;
+          gpuFailedRef.current = true; // never retry-init on this mount
+          setDisplayBackend('canvas2d');
+          setGpuStage(false); // re-key the canvas; this effect re-runs on Canvas2D
+        };
+        const gpuTimeout = window.setTimeout(() => fallbackToCanvas2d('timeout'), 8000);
+        createGpuRenderer(gpuCanvas, { onDeviceLost: fallbackToCanvas2d })
+          .then((renderer) => {
+            window.clearTimeout(gpuTimeout);
+            if (gpuDisposed) {
+              renderer?.destroy();
+              return;
+            }
+            if (!renderer) {
+              fallbackToCanvas2d('unavailable');
+              return;
+            }
+            gpuRenderer = renderer;
+            setDisplayBackend('webgpu');
+            dispDirtyRef.current = true;
+            ensureLoopRef.current();
+          })
+          .catch(() => {
+            window.clearTimeout(gpuTimeout);
+            fallbackToCanvas2d('exception');
+          });
+      }
+    }
 
     /* ---------- draw passes ---------- */
 
     const drawDisplay = (): void => {
-      const ctx = displayCtxRef.current;
       const composite = compositeRef.current;
-      if (!ctx || !composite) return;
+      if (!composite) return;
       const st = useEditorStore.getState();
       const { view, doc } = st;
       const { w, h } = sizeRef.current;
+
+      // WebGPU display path: present the cached composite as a textured quad.
+      // The texture only re-uploads on revision changes — pan/zoom/resize
+      // re-present the same texture under a new view matrix (the perf win).
+      if (gpuBackend) {
+        if (!gpuRenderer) return; // initializing or fallen back — swap pending
+        const bb = docScreenBBox(view, doc.width, doc.height);
+        const bx = Math.max(0, bb.minX);
+        const by = Math.max(0, bb.minY);
+        gpuRenderer.render(composite, {
+          view,
+          width: w,
+          height: h,
+          dpr: dprRef.current,
+          checkerCell: Math.max(1, st.settings.checkerSize),
+          checkerBBox: {
+            x: bx,
+            y: by,
+            w: Math.min(w, bb.maxX) - bx,
+            h: Math.min(h, bb.maxY) - by,
+          },
+          docWidth: doc.width,
+          docHeight: doc.height,
+          contentVersion: st.revision,
+        });
+        return;
+      }
+
+      const ctx = displayCtxRef.current;
+      if (!ctx) return;
 
       ctx.setTransform(dprRef.current, 0, 0, dprRef.current, 0, 0);
       ctx.clearRect(0, 0, w, h);
@@ -978,6 +1087,10 @@ export default function CanvasStage() {
       cancelAnimationFrame(rafRef.current);
       loopRunning = false;
       ensureLoopRef.current = () => {};
+      gpuDisposed = true;
+      gpuDead = true; // late init/device-lost must not swap after teardown
+      gpuRenderer?.destroy();
+      gpuRenderer = null;
       unsubscribe();
       resizeObserver.disconnect();
       container.removeEventListener('pointerdown', onPointerDown);
@@ -994,11 +1107,11 @@ export default function CanvasStage() {
       window.removeEventListener('pf:fit', onPfFit);
       window.removeEventListener('scroll', refreshRect, true);
     };
-  }, [markAll, markDisplay, markOverlay, applyCursor]);
+  }, [markAll, markDisplay, markOverlay, applyCursor, gpuStage]);
 
   return (
     <div ref={containerRef} className="pf-canvas pf-workspace relative h-full w-full select-none overflow-hidden">
-      <canvas ref={displayRef} className="pf-canvas absolute inset-0 h-full w-full" />
+      <canvas key={gpuStage ? 'webgpu' : 'canvas2d'} ref={displayRef} className="pf-canvas absolute inset-0 h-full w-full" />
       <canvas ref={overlayRef} className="pf-canvas pointer-events-none absolute inset-0 h-full w-full" />
     </div>
   );

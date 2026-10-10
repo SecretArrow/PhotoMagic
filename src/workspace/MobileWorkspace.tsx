@@ -175,7 +175,7 @@ export default function MobileWorkspace() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.psd"
         className="hidden"
         aria-hidden="true"
         tabIndex={-1}
@@ -228,12 +228,16 @@ export default function MobileWorkspace() {
             onValueChange={(v) => setMobilePanel(v as UiState['mobilePanel'])}
             className="flex h-full min-h-0 flex-col gap-0"
           >
-            <TabsList className="h-13 w-full shrink-0 justify-start rounded-none border-b border-[#2c2d33] bg-[#1b1c20] p-1">
+            {/* 390px: 6 triggers + the sheet's absolute close X don't fit —
+                the tablist scrolls horizontally; the trailing spacer keeps the
+                last tab scrollable clear of the close button (top-right) */}
+            <TabsList className="pf-scroll h-13 w-full shrink-0 justify-start overflow-x-auto overflow-y-hidden rounded-none border-b border-[#2c2d33] bg-[#1b1c20] p-1">
               {MOBILE_TABS.map((tab) => (
-                <TabsTrigger key={tab.id} value={tab.id} className="min-h-11 px-1 text-[10px]">
+                <TabsTrigger key={tab.id} value={tab.id} className="min-h-11 flex-none px-2.5 text-[10px]">
                   {t(tab.labelKey)}
                 </TabsTrigger>
               ))}
+              <span aria-hidden="true" className="w-8 shrink-0" />
             </TabsList>
             {MOBILE_TABS.map((tab) => (
               <TabsContent key={tab.id} value={tab.id} className="mt-0 min-h-0 flex-1">

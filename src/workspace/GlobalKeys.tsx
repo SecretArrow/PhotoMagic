@@ -211,7 +211,7 @@ export default function GlobalKeys() {
     <input
       ref={fileInputRef}
       type="file"
-      accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,application/json,.pfs"
+      accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,application/json,.pfs,.psd"
       className="hidden"
       aria-hidden
       tabIndex={-1}

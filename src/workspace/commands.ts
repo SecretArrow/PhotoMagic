@@ -9,12 +9,13 @@
  * with an image Blob for cross-app pasting.
  */
 
-import type { RasterLayer, Selection } from '../engine/types';
-import { APP_VERSION, createRasterLayer } from '../engine/document';
+import type { DocumentState, RasterLayer, Selection } from '../engine/types';
+import { APP_VERSION, createDocument, createRasterLayer } from '../engine/document';
 import { imageDataFromCanvas, putImageData } from '../engine/raster';
 import { useEditorStore } from '../state/editorStore';
 import { saveProject } from '../documents/project';
 import { downloadBlob, importImageLayer, safeFilename } from '../formats/api';
+import { importPsd, isPsdFile } from '../formats/psdImport';
 import { toast } from '../hooks/use-toast';
 import { dictionaries, translate, type Language, type TranslationKey } from '../i18n/dictionaries';
 import { toolOptionsKey } from './toolMeta';
@@ -146,7 +147,8 @@ export function openFilePicker(): void {
   if (!fileInput) {
     fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,application/json,.pfs';
+    fileInput.accept =
+      'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,application/json,.pfs,.psd';
     fileInput.multiple = false;
     fileInput.style.display = 'none';
     fileInput.addEventListener('change', () => {
@@ -159,11 +161,15 @@ export function openFilePicker(): void {
   fileInput.click();
 }
 
-/** Imports an image as a new layer, or a .pfs project as a new document. */
+/** Imports an image as a new layer, a .pfs project as a new document, or a PSD as a layered document. */
 export async function handleOpenFiles(files: FileList | File[]): Promise<void> {
   const file = files[0];
   if (!file) return;
   const store = useEditorStore.getState();
+  if (await isPsdFile(file)) {
+    await openPsdDocument(file, store);
+    return;
+  }
   const result = await importImageLayer(file, store.doc.width, store.doc.height);
   if (result.project) {
     store.openDocument(result.project);
@@ -178,10 +184,54 @@ export async function handleOpenFiles(files: FileList | File[]): Promise<void> {
   toast({
     title: toastText(
       'toast.unsupportedFormat',
-      '{name} is not supported in this build. Supported: PNG, JPEG, WebP, GIF, BMP, SVG.',
+      '{name} is not supported in this build. Supported: PNG, JPEG, WebP, GIF, BMP, SVG, PSD.',
       { name: file.name },
     ),
   });
+}
+
+/**
+ * Opens a PSD as a new document: layers are rebuilt bottom→top from the PSD
+ * records (which are stored top-first), preserving names, offsets, blend
+ * modes, opacity and visibility. Failure shows the parser's user-facing
+ * message ('import.psdFailed' once the i18n key lands; the EN literal below
+ * is the graceful fallback until then).
+ */
+async function openPsdDocument(
+  file: File,
+  store: ReturnType<typeof useEditorStore.getState>,
+): Promise<void> {
+  try {
+    const imported = await importPsd(file);
+    const doc: DocumentState = createDocument({
+      name: imported.name,
+      width: imported.width,
+      height: imported.height,
+      background: 'transparent',
+      withBackgroundLayer: false,
+    });
+    doc.layers = [];
+    // PSD stores layer records top-first; doc.layers is bottom→top.
+    for (const importedLayer of imported.layers) {
+      const layer = createRasterLayer(importedLayer.name, importedLayer.width, importedLayer.height, importedLayer.canvas);
+      layer.x = importedLayer.x;
+      layer.y = importedLayer.y;
+      layer.visible = importedLayer.visible;
+      layer.opacity = importedLayer.opacity;
+      layer.blendMode = importedLayer.blend;
+      doc.layers.unshift(layer);
+    }
+    doc.selectedLayerIds = doc.layers.length > 0 ? [doc.layers[doc.layers.length - 1].id] : [];
+    doc.createdAt = Date.now();
+    doc.updatedAt = Date.now();
+    store.openDocument(doc);
+    toast({ title: toastText('toast.imported', 'Imported {name}', { name: file.name }) });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown error';
+    toast({
+      title: toastText('import.psdFailed' as TranslationKey, 'Could not import PSD: {reason}', { reason }),
+    });
+  }
 }
 
 /** Serializes the document and downloads it as a .pfs project file. */

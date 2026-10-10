@@ -12,6 +12,7 @@ import { useEditorStore } from '../../state/editorStore';
 import { currentDocFingerprint } from '../../state/editorStore';
 import { historyBytes } from '../../history';
 import { useI18n } from '../../i18n';
+import { getDisplayBackend, subscribeDisplayBackend, type DisplayBackend } from '../../canvas/gpu';
 
 interface HeapInfo {
   usedJSHeapSize: number;
@@ -31,6 +32,10 @@ export default function StatusBar() {
   const savedFingerprint = useEditorStore((s) => s.extras.savedFingerprint);
   const revision = useEditorStore((s) => s.revision);
   const [heapMb, setHeapMb] = useState<number | null>(null);
+  /* what the stage ACTUALLY presents with (not just the preference) */
+  const [backend, setBackend] = useState<DisplayBackend>(getDisplayBackend);
+
+  useEffect(() => subscribeDisplayBackend(setBackend), []);
 
   useEffect(() => {
     const read = () => {
@@ -56,6 +61,9 @@ export default function StatusBar() {
       <span className="shrink-0">{t('status.layerCount', { n: layerCount })}</span>
       <span className="hidden shrink-0 md:inline">{t('status.colorDepth')}</span>
       <span className="hidden shrink-0 md:inline">{t('status.profile')}</span>
+      <span className="hidden shrink-0 md:inline" title={t('status.renderer')}>
+        {backend === 'webgpu' ? t('status.rendererWebgpu') : t('status.rendererCanvas2d')}
+      </span>
       {heapMb !== null ? (
         <span className="hidden shrink-0 tabular-nums lg:inline" title={t('status.memory')}>
           {t('status.memory')} {heapMb.toFixed(0)} MB

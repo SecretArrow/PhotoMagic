@@ -15,7 +15,7 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 | BMP                      | ✅ Supported        | Standard uncompressed variants via browser decoder.                          |
 | SVG                      | ⚠️ Partial          | **Rasterized on import** (sanitized by re-drawing). Vector nodes are not editable after import. |
 | TIFF                     | ❌ Not supported    | Browsers ship no TIFF decoder; needs a custom decoder (planned — see below).  |
-| PSD / PSB (Photoshop)    | ❌ Not supported    | Layered **import** parsing is a large standalone effort (planned). **Export** to PSD is supported — see below. |
+| PSD (Photoshop)          | ⚠️ Partial          | **Import:** PSD v1, RGB, 8-bit (raw/RLE channel data) — layers with blend modes, opacity, visibility, offsets and names; text/shape/smart layers import as their stored raster pixels; flattened files fall back to the composite. Not supported: PSB, CMYK/grayscale/indexed/Lab, 16/32-bit, layer/vector masks, smart filters. **Export** to PSD is supported — see below. |
 | PDF                      | ❌ Not supported    | Out of scope for an image editor v1.                                          |
 | HEIC / HEIF              | ❌ Not supported    | Licensing + platform decoder variance; not bundled.                           |
 | AVIF                     | ❌ Not supported    | Deliberately not wired in this build even where platform decoders exist.      |
@@ -58,3 +58,4 @@ Honest support matrix for the current build (`version` 1 / app 1.0.0). If a form
 
 - The editor is a **client-only** app; storage (autosave/recovery) uses IndexedDB and sessionStorage. Browsers in strict private modes may deny persistence — autosave then no-ops gracefully.
 - Offline support (PWA service worker) requires a production build served over HTTPS (or localhost, where registration is intentionally skipped).
+- **Renderer preference (Preferences → Renderer):** `Auto` uses a WebGPU *display* path (the composed document is presented as a GPU quad; compositing itself stays Canvas2D) whenever the browser exposes `navigator.gpu` and initialization succeeds. Headless browsers, Safari < 26 / older Firefox, and any init or device-loss failure silently use Canvas 2D instead — output pixels are identical, only the blit differs. The status bar shows the renderer actually in use.

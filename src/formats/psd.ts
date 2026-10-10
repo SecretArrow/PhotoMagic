@@ -53,6 +53,16 @@ function psdBlendKey(mode: string): string {
   return BLEND_TO_PSD[mode as BlendMode] ?? 'norm';
 }
 
+/** 4-char PSD blend key → engine blend mode (inverse of BLEND_TO_PSD). */
+export const PSD_TO_BLEND: Record<string, BlendMode> = Object.fromEntries(
+  Object.entries(BLEND_TO_PSD).map(([mode, key]) => [key, mode]),
+) as Record<string, BlendMode>;
+
+/** Maps a PSD layer blend key onto the engine blend mode; unknown keys → normal. */
+export function psdBlendMode(key: string): BlendMode {
+  return PSD_TO_BLEND[key] ?? 'normal';
+}
+
 /* ------------------------------------------------------------------ */
 /* PackBits RLE                                                        */
 /* ------------------------------------------------------------------ */

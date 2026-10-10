@@ -33,6 +33,7 @@ export const SUPPORTED_IMPORT_TYPES = new Set([
   'image/bmp',
   'image/svg+xml',
   'application/json', // .pfs projects
+  'image/vnd.adobe.photoshop', // .psd (routed to the layered PSD importer)
 ]);
 
 export const PARTIAL_SUPPORT: Record<string, string> = {
@@ -41,7 +42,7 @@ export const PARTIAL_SUPPORT: Record<string, string> = {
 };
 
 export const UNSUPPORTED_HINT =
-  'Supported formats: PNG, JPEG, WebP, GIF (first frame), BMP, SVG, .pfs projects. TIFF/PSD/PDF/HEIC/RAW are not supported in this build.';
+  'Supported formats: PNG, JPEG, WebP, GIF (first frame), BMP, SVG, PSD (RGB 8-bit), .pfs projects. TIFF/PDF/HEIC/RAW are not supported in this build.';
 
 /** Decodes a File/Blob into a bitmap-safe canvas (sanitizes SVG by re-drawing). */
 export async function blobToCanvas(blob: Blob): Promise<AnyCanvas> {

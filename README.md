@@ -22,6 +22,7 @@ PixelForge Studio is a client-side image editor with a Photoshop-style workflow 
 - **PWA / offline** — installable app with a service worker; keep editing without a network connection
 - **EN / ID localization** — full English and Indonesian dictionaries
 - **Native project format** — `.pfs` files (versioned JSON with embedded PNG buffers) that save and restore complete documents
+- **Photoshop (PSD) import & export** — layered PSD v1 (RGB 8-bit) files open with layers, blend modes, opacity, visibility and offsets preserved; non-raster layers import rasterized
 
 ## Tech stack
 
@@ -88,10 +89,10 @@ docs/          # architecture, compatibility matrix, licenses
 
 ## Roadmap
 
-> **Status note:** the items below are **NOT implemented** in the current build. They are planned work, tracked here so nobody mistakes them for shipped features.
+> **Status note:** the items below are **NOT fully implemented** in the current build. They are planned (or partially shipped, where marked) work, tracked here so nobody mistakes them for complete features.
 
-- **WebGPU render backend** — the engine currently composites with Canvas2D; a WebGPU backend for large documents is a future project (see `docs/ARCHITECTURE.md`).
-- **PSD / TIFF import** — not supported yet; Photoshop (PSD/PSB) and TIFF files must be converted first (see `docs/COMPATIBILITY.md`).
+- **WebGPU render backend** — **partially shipped**: an optional WebGPU *display* path presents the composed document as a GPU quad (texture uploads only on content changes; automatic, permanent Canvas 2D fallback wherever WebGPU is unavailable). The compose/filter pipeline itself is still Canvas2D — full GPU composition is future work (see `docs/ARCHITECTURE.md`).
+- **TIFF import** — not supported yet; TIFF files must be converted first (layered **PSD import is supported** — see `docs/COMPATIBILITY.md`).
 - **Content-aware fill** — not implemented; healing/clone tools exist, but inpainting-style fill is future work.
 
 ## Privacy

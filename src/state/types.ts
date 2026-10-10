@@ -116,6 +116,8 @@ export interface EditorSettings {
   theme: 'dark';
   checkerSize: number;
   showToasts: boolean;
+  /** viewport display backend: 'auto' uses WebGPU when available, else Canvas2D */
+  renderer: 'auto' | 'canvas2d';
 }
 
 export type DialogId =

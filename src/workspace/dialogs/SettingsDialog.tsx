@@ -41,6 +41,15 @@ export default function SettingsDialog({ open, onOpenChange }: WorkspaceDialogPr
               { value: 'id', label: 'Bahasa Indonesia' },
             ]}
           />
+          <SelectRow
+            label={t('dialog.settings.renderer')}
+            value={settings.renderer}
+            onValueChange={(v) => update({ renderer: v as 'auto' | 'canvas2d' })}
+            items={[
+              { value: 'auto', label: t('dialog.settings.rendererAuto') },
+              { value: 'canvas2d', label: t('dialog.settings.rendererCanvas2d') },
+            ]}
+          />
           <SwitchRow label={t('dialog.settings.autosave')} checked={settings.autosaveEnabled} onCheckedChange={(v) => update({ autosaveEnabled: v })} />
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="flex-1">{t('dialog.settings.autosaveInterval')}</span>
