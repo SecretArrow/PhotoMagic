@@ -7,13 +7,16 @@
  * changes) so edits apply immediately.
  */
 
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
+import { Check, X } from 'lucide-react';
 import { useEditorStore } from '../../state/editorStore';
 import type { TextContent, ToolId } from '../../engine/types';
 import type { ShapeOptions } from '../../state/types';
 import { useI18n } from '../../i18n';
 import { toolLabelKey } from '../toolMeta';
 import { ColorPickerButton, NumInput, SelectRow, SliderRow, SwitchRow } from './controls';
+import { Button } from '@/components/ui/button';
+import { cancelCrop, commitCrop, isCropRectActive, onCropRectChange } from '../../tools/crop';
 
 const FONT_LIST: { value: string; label: string }[] = [
   { value: 'system-ui, sans-serif', label: 'System UI' },
@@ -366,17 +369,15 @@ export default function OptionsBar() {
       ];
       const aspect = toolOptions.crop.aspect;
       const currentKey = aspect === null ? 'free' : (ASPECT_PRESETS.find((p) => p.ratio !== null && Math.abs(p.ratio - aspect) < 1e-6)?.value ?? 'free');
-      return (
-        <Bar>
-          <SelectRow
-            label={t('options.aspect')}
-            value={currentKey}
-            onValueChange={(v) => updateToolOptions('crop', { aspect: ASPECT_PRESETS.find((p) => p.value === v)?.ratio ?? null })}
-            items={ASPECT_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
-          />
-          <span className="text-[11px] text-muted-foreground">{t(toolLabelKey(tool))}</span>
-        </Bar>
-      );
+      return <CropOptions
+        aspectKey={currentKey}
+        presets={ASPECT_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+        onAspect={(v) => updateToolOptions('crop', { aspect: ASPECT_PRESETS.find((p) => p.value === v)?.ratio ?? null })}
+        aspectLabel={t('options.aspect')}
+        toolLabel={t(toolLabelKey(tool))}
+        applyLabel={t('options.cropApply')}
+        cancelLabel={t('options.cropCancel')}
+      />;
     }
 
     case 'hand':
@@ -420,5 +421,57 @@ function ToggleChip({ active, label, bold, italic, underline, onClick, children 
     >
       {children}
     </button>
+  );
+}
+
+/* ------------------------------ crop options ----------------------------- */
+
+interface CropOptionsProps {
+  aspectKey: string;
+  presets: { value: string; label: string }[];
+  onAspect: (value: string) => void;
+  aspectLabel: string;
+  toolLabel: string;
+  applyLabel: string;
+  cancelLabel: string;
+}
+
+/**
+ * Crop tool options with explicit Apply/Cancel actions. Subscribes to the
+ * crop tool's rect lifecycle so the buttons enable the moment a crop rect
+ * exists and disable again after commit/cancel (Enter/double-click/Escape
+ * keep working — the buttons make the flow discoverable).
+ */
+function CropOptions({ aspectKey, presets, onAspect, aspectLabel, toolLabel, applyLabel, cancelLabel }: CropOptionsProps) {
+  const [hasRect, setHasRect] = useState(isCropRectActive());
+  useEffect(() => onCropRectChange(() => setHasRect(isCropRectActive())), []);
+  return (
+    <Bar>
+      <SelectRow label={aspectLabel} value={aspectKey} onValueChange={onAspect} items={presets} />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Button
+          size="sm"
+          className="h-7 gap-1 rounded px-2.5 text-xs"
+          disabled={!hasRect}
+          title={applyLabel}
+          onClick={() => commitCrop()}
+        >
+          <Check className="size-3.5" />
+          {applyLabel}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 rounded px-2.5 text-xs"
+          disabled={!hasRect}
+          title={cancelLabel}
+          onClick={() => cancelCrop()}
+        >
+          <X className="size-3.5" />
+          {cancelLabel}
+        </Button>
+      </div>
+      <span className="shrink-0 text-[11px] text-muted-foreground">{toolLabel}</span>
+    </Bar>
   );
 }

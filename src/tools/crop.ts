@@ -42,6 +42,24 @@ let lastDownScreen = { x: 0, y: 0 };
 
 const MIN_SIZE = 8;
 
+/* ---- UI bridge: lets the OptionsBar render live Apply/Cancel state ------ */
+type CropListener = () => void;
+const cropListeners = new Set<CropListener>();
+/** Subscribe to crop-rect lifecycle changes; returns an unsubscribe fn. */
+export function onCropRectChange(fn: CropListener): () => void {
+  cropListeners.add(fn);
+  return () => {
+    cropListeners.delete(fn);
+  };
+}
+/** True while a crop rect exists on the canvas (Apply/Cancel meaningful). */
+export function isCropRectActive(): boolean {
+  return rect !== null;
+}
+function notifyCrop(): void {
+  for (const fn of cropListeners) fn();
+}
+
 function normalized(x0: number, y0: number, x1: number, y1: number): CropRect {
   return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
 }
@@ -118,18 +136,21 @@ function applyResize(start: CropRect, handle: number, docX: number, docY: number
   return normalized(x0, y0, x1, y1);
 }
 
-function commitCrop(): void {
+export function commitCrop(): void {
   if (!rect) return;
   if (rect.w >= MIN_SIZE && rect.h >= MIN_SIZE) {
     useEditorStore.getState().cropTo({ x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) });
   }
   rect = null;
+  notifyCrop();
 }
 
-function cancelCrop(): void {
+export function cancelCrop(): void {
+  const had = rect !== null;
   rect = null;
   mode = 'none';
   resizeHandle = -1;
+  if (had) notifyCrop();
 }
 
 export const cropController: ToolController = {
@@ -168,6 +189,7 @@ export const cropController: ToolController = {
     mode = 'draw';
     drawStart = { x: e.docX, y: e.docY };
     rect = { x: e.docX, y: e.docY, w: 0, h: 0 };
+    notifyCrop();
     ctx.invalidate();
   },
   onPointerMove(e: CanvasPointerEvent, ctx: ToolContext): void {
@@ -197,12 +219,14 @@ export const cropController: ToolController = {
         ? resizeAspect(rectAtStart, resizeHandle, e.docX, e.docY, aspect)
         : applyResize(rectAtStart, resizeHandle, e.docX, e.docY);
     }
+    notifyCrop();
     ctx.invalidate();
   },
   onPointerUp(_e: CanvasPointerEvent, ctx: ToolContext): void {
     mode = 'none';
     resizeHandle = -1;
     if (rect && (rect.w < MIN_SIZE || rect.h < MIN_SIZE)) rect = null;
+    notifyCrop();
     ctx.invalidate();
   },
   onPointerCancel(_e: CanvasPointerEvent, ctx: ToolContext): void {
