@@ -102,13 +102,13 @@ function cleanName(name: string): string {
 
 /* ------------------------------ export ------------------------------ */
 
-export type ExportFormat = 'png' | 'jpeg' | 'webp';
+export type ExportFormat = 'png' | 'jpeg' | 'webp' | 'avif';
 
 export interface ExportOptions {
   format: ExportFormat;
   quality: number; // 0..1
   scale: number; // 0.1..4
-  transparent: boolean; // PNG/WebP only
+  transparent: boolean; // PNG/WebP/AVIF only
   doc: DocumentState;
 }
 
@@ -134,14 +134,33 @@ export async function exportComposite(opts: ExportOptions): Promise<ExportResult
     ctx.fillRect(0, 0, w, h);
   }
   ctx.drawImage(composite as CanvasImageSource, 0, 0, w, h);
-  const mime = opts.format === 'png' ? 'image/png' : opts.format === 'webp' ? 'image/webp' : 'image/jpeg';
+  const mime =
+    opts.format === 'png'
+      ? 'image/png'
+      : opts.format === 'webp'
+        ? 'image/webp'
+        : opts.format === 'avif'
+          ? 'image/avif'
+          : 'image/jpeg';
   const blob = await canvasToBlob(out, mime, opts.quality);
+  if (opts.format === 'avif' && blob.type !== 'image/avif') {
+    // Browsers without AVIF silently fall back to PNG — surface that instead
+    // of shipping a mislabeled file (the UI feature-detects before offering AVIF).
+    throw new Error('AVIF encoding is not supported by this browser');
+  }
   return { blob, filename: `${safeFilename(doc.name)}.${opts.format === 'jpeg' ? 'jpg' : opts.format}`, width: w, height: h };
 }
 
 export async function exportLayer(layer: Layer, doc: DocumentState, format: ExportFormat = 'png', quality = 0.95): Promise<ExportResult> {
   const isolated = renderLayerIsolated(layer, doc);
-  const mime = format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg';
+  const mime =
+    format === 'png'
+      ? 'image/png'
+      : format === 'webp'
+        ? 'image/webp'
+        : format === 'avif'
+          ? 'image/avif'
+          : 'image/jpeg';
   const blob = await canvasToBlob(isolated, mime, quality);
   return {
     blob,

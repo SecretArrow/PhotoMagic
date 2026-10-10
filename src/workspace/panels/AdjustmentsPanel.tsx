@@ -24,57 +24,85 @@ import { ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
 interface EditorProps {
   spec: AdjustmentSpec;
   onChange: (spec: AdjustmentSpec) => void;
+  /** Fired once per interaction commit (slider release / number blur) so callers
+   *  can push a single history entry for a whole drag (optional). */
+  onCommit?: () => void;
 }
 
-export function AdjustmentParamsEditor({ spec, onChange }: EditorProps) {
+interface ParamSliderProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onValueChange: (v: number) => void;
+  onCommit?: () => void;
+}
+
+/** SliderRow bound to the shared per-interaction commit callback. */
+function ParamSlider({ label, value, min, max, step, onValueChange, onCommit }: ParamSliderProps) {
+  return (
+    <SliderRow
+      label={label}
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      onValueChange={onValueChange}
+      onValueCommit={onCommit ? () => onCommit() : undefined}
+    />
+  );
+}
+
+export function AdjustmentParamsEditor({ spec, onChange, onCommit }: EditorProps) {
   const { t } = useI18n();
   switch (spec.type) {
     case 'brightness-contrast':
       return (
         <>
-          <SliderRow label={t('adjust.param.brightness')} value={spec.brightness} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, brightness: v })} />
-          <SliderRow label={t('adjust.param.contrast')} value={spec.contrast} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, contrast: v })} />
+          <ParamSlider label={t('adjust.param.brightness')} value={spec.brightness} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, brightness: v })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.contrast')} value={spec.contrast} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, contrast: v })} onCommit={onCommit} />
         </>
       );
     case 'exposure':
-      return <SliderRow label={t('adjust.param.exposure')} value={spec.exposure} min={-2} max={2} step={0.05} onValueChange={(v) => onChange({ ...spec, exposure: v })} />;
+      return <ParamSlider label={t('adjust.param.exposure')} value={spec.exposure} min={-2} max={2} step={0.05} onValueChange={(v) => onChange({ ...spec, exposure: v })} onCommit={onCommit} />;
     case 'hue-saturation':
       return (
         <>
-          <SliderRow label={t('adjust.param.hue')} value={spec.hue} min={-180} max={180} onValueChange={(v) => onChange({ ...spec, hue: v })} />
-          <SliderRow label={t('adjust.param.saturation')} value={spec.saturation} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, saturation: v })} />
-          <SliderRow label={t('adjust.param.lightness')} value={spec.lightness} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, lightness: v })} />
+          <ParamSlider label={t('adjust.param.hue')} value={spec.hue} min={-180} max={180} onValueChange={(v) => onChange({ ...spec, hue: v })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.saturation')} value={spec.saturation} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, saturation: v })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.lightness')} value={spec.lightness} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, lightness: v })} onCommit={onCommit} />
         </>
       );
     case 'vibrance':
-      return <SliderRow label={t('adjust.param.amount')} value={spec.amount} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, amount: v })} />;
+      return <ParamSlider label={t('adjust.param.amount')} value={spec.amount} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, amount: v })} onCommit={onCommit} />;
     case 'temperature':
       return (
         <>
-          <SliderRow label={t('adjust.param.temperature')} value={spec.temperature} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, temperature: v })} />
-          <SliderRow label={t('adjust.param.tint')} value={spec.tint} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, tint: v })} />
+          <ParamSlider label={t('adjust.param.temperature')} value={spec.temperature} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, temperature: v })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.tint')} value={spec.tint} min={-100} max={100} onValueChange={(v) => onChange({ ...spec, tint: v })} onCommit={onCommit} />
         </>
       );
     case 'invert':
       return <p className="text-[11px] text-muted-foreground">{t(adjustmentLabelKey('invert'))}</p>;
     case 'grayscale':
-      return <SliderRow label={t('adjust.param.amount')} value={spec.amount} min={0} max={100} onValueChange={(v) => onChange({ ...spec, amount: v })} />;
+      return <ParamSlider label={t('adjust.param.amount')} value={spec.amount} min={0} max={100} onValueChange={(v) => onChange({ ...spec, amount: v })} onCommit={onCommit} />;
     case 'sepia':
-      return <SliderRow label={t('adjust.param.amount')} value={spec.amount} min={0} max={100} onValueChange={(v) => onChange({ ...spec, amount: v })} />;
+      return <ParamSlider label={t('adjust.param.amount')} value={spec.amount} min={0} max={100} onValueChange={(v) => onChange({ ...spec, amount: v })} onCommit={onCommit} />;
     case 'posterize':
-      return <SliderRow label={t('adjust.param.levels')} value={spec.levels} min={2} max={32} onValueChange={(v) => onChange({ ...spec, levels: v })} />;
+      return <ParamSlider label={t('adjust.param.levels')} value={spec.levels} min={2} max={32} onValueChange={(v) => onChange({ ...spec, levels: v })} onCommit={onCommit} />;
     case 'threshold':
-      return <SliderRow label={t('adjust.param.level')} value={spec.level} min={0} max={255} onValueChange={(v) => onChange({ ...spec, level: v })} />;
+      return <ParamSlider label={t('adjust.param.level')} value={spec.level} min={0} max={255} onValueChange={(v) => onChange({ ...spec, level: v })} onCommit={onCommit} />;
     case 'gamma':
-      return <SliderRow label={t('adjust.param.gamma')} value={spec.gamma} min={0.1} max={3} step={0.05} onValueChange={(v) => onChange({ ...spec, gamma: v })} />;
+      return <ParamSlider label={t('adjust.param.gamma')} value={spec.gamma} min={0.1} max={3} step={0.05} onValueChange={(v) => onChange({ ...spec, gamma: v })} onCommit={onCommit} />;
     case 'levels':
       return (
         <>
-          <SliderRow label={t('adjust.param.inBlack')} value={spec.inBlack} min={0} max={254} onValueChange={(v) => onChange({ ...spec, inBlack: Math.min(v, spec.inWhite - 1) })} />
-          <SliderRow label={t('adjust.param.inWhite')} value={spec.inWhite} min={1} max={255} onValueChange={(v) => onChange({ ...spec, inWhite: Math.max(v, spec.inBlack + 1) })} />
-          <SliderRow label={t('adjust.param.gamma')} value={spec.gamma} min={0.1} max={3} step={0.05} onValueChange={(v) => onChange({ ...spec, gamma: v })} />
-          <SliderRow label={t('adjust.param.outBlack')} value={spec.outBlack} min={0} max={255} onValueChange={(v) => onChange({ ...spec, outBlack: Math.min(v, spec.outWhite) })} />
-          <SliderRow label={t('adjust.param.outWhite')} value={spec.outWhite} min={0} max={255} onValueChange={(v) => onChange({ ...spec, outWhite: Math.max(v, spec.outBlack) })} />
+          <ParamSlider label={t('adjust.param.inBlack')} value={spec.inBlack} min={0} max={254} onValueChange={(v) => onChange({ ...spec, inBlack: Math.min(v, spec.inWhite - 1) })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.inWhite')} value={spec.inWhite} min={1} max={255} onValueChange={(v) => onChange({ ...spec, inWhite: Math.max(v, spec.inBlack + 1) })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.gamma')} value={spec.gamma} min={0.1} max={3} step={0.05} onValueChange={(v) => onChange({ ...spec, gamma: v })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.outBlack')} value={spec.outBlack} min={0} max={255} onValueChange={(v) => onChange({ ...spec, outBlack: Math.min(v, spec.outWhite) })} onCommit={onCommit} />
+          <ParamSlider label={t('adjust.param.outWhite')} value={spec.outWhite} min={0} max={255} onValueChange={(v) => onChange({ ...spec, outWhite: Math.max(v, spec.outBlack) })} onCommit={onCommit} />
         </>
       );
     default:

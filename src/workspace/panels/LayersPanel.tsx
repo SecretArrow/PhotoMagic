@@ -186,8 +186,17 @@ export default function LayersPanel() {
           min={0}
           max={100}
           onValueChange={(v) => {
-            const layer = useEditorStore.getState().getActiveLayer();
-            if (layer) useEditorStore.getState().updateLayer(layer.id, { opacity: v / 100 }, 'layers.opacity', 'Layer opacity');
+            // live update while dragging — history is pushed once on commit
+            const store = useEditorStore.getState();
+            const layer = store.getActiveLayer();
+            if (!layer) return;
+            store.beginLayerEdit(layer.id);
+            store.updateLayerLive(layer.id, { opacity: v / 100 });
+          }}
+          onValueCommit={() => {
+            const store = useEditorStore.getState();
+            const layer = store.getActiveLayer();
+            if (layer) store.endLayerEdit(layer.id, 'layers.opacity', 'Layer opacity');
           }}
         />
       </div>
@@ -463,11 +472,9 @@ const LayerThumb = memo(function LayerThumb({
   return (
     <span className="relative flex size-8 shrink-0 items-center justify-center overflow-hidden rounded border border-[#3a3b42] bg-[#26272c]">
       {url ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt="" className="max-h-full max-w-full" draggable={false} />
       ) : null}
       {maskUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={maskUrl} alt="" className="absolute bottom-0 right-0 size-3.5 rounded-sm border border-[#3a3b42]" draggable={false} />
       ) : null}
     </span>

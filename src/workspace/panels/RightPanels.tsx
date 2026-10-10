@@ -11,12 +11,13 @@ import { useEditorStore } from '../../state/editorStore';
 import type { RightPanelId } from '../../state/types';
 import { useI18n } from '../../i18n';
 import type { TranslationKey } from '../../i18n/dictionaries';
-import { Compass, History as HistoryIcon, Layers, Palette, Settings2, SlidersHorizontal, type LucideIcon } from 'lucide-react';
+import { BarChart3, Compass, History as HistoryIcon, Layers, Palette, Settings2, SlidersHorizontal, type LucideIcon } from 'lucide-react';
 import LayersPanel from './LayersPanel';
 import HistoryPanel from './HistoryPanel';
 import AdjustmentsPanel from './AdjustmentsPanel';
 import ColorPanel from './ColorPanel';
 import NavigatorPanel from './NavigatorPanel';
+import HistogramPanel from './HistogramPanel';
 import PropertiesPanel from './PropertiesPanel';
 
 const TABS: { id: RightPanelId; icon: LucideIcon; labelKey: TranslationKey }[] = [
@@ -25,6 +26,7 @@ const TABS: { id: RightPanelId; icon: LucideIcon; labelKey: TranslationKey }[] =
   { id: 'adjustments', icon: SlidersHorizontal, labelKey: 'panel.adjustments' },
   { id: 'color', icon: Palette, labelKey: 'panel.color' },
   { id: 'navigator', icon: Compass, labelKey: 'panel.navigator' },
+  { id: 'histogram', icon: BarChart3, labelKey: 'panel.histogram' },
   { id: 'properties', icon: Settings2, labelKey: 'panel.properties' },
 ];
 
@@ -34,6 +36,7 @@ const PANEL_BODIES: Record<RightPanelId, ComponentType> = {
   adjustments: AdjustmentsPanel,
   color: ColorPanel,
   navigator: NavigatorPanel,
+  histogram: HistogramPanel,
   properties: PropertiesPanel,
 };
 

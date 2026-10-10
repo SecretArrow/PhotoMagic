@@ -96,6 +96,7 @@ export function clearSelectionRegion(labelKey: TranslationKey, labelFallback: st
   } else {
     for (let i = 3; i < after.data.length; i += 4) after.data[i] = 0;
   }
+  putImageData(raster.canvas, after); // write pixels BEFORE committing (commitPixelEdit only records the diff)
   store.commitPixelEdit(raster.id, before, after, labelKey, labelFallback);
   return true;
 }
@@ -116,6 +117,7 @@ export function fillActiveLayerWithColor(hex: string, labelKey: TranslationKey, 
     after.data[i + 2] = b;
     after.data[i + 3] = 255;
   }
+  putImageData(raster.canvas, after); // write pixels BEFORE committing (commitPixelEdit only records the diff)
   store.commitPixelEdit(raster.id, before, after, labelKey, labelFallback);
   return true;
 }

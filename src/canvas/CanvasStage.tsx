@@ -12,8 +12,10 @@
  *
  * Rendering model: a single rAF loop with two dirty flags (display/overlay).
  * composeDocument() runs only when the store `revision` (or the document
- * dimensions) change — never per frame. The ants animation invalidates the
- * overlay at ~15 fps while a selection exists.
+ * dimensions) change — never per frame. The loop idles to a full stop when
+ * nothing needs redrawing (no dirty flags, no marching-ants selection), and
+ * any mark, pointer or store event restarts it — no 60 fps polling while idle.
+ * The ants animation invalidates the overlay at ~15 fps while a selection exists.
  *
  * Draw matrix: scale(flip) → rotate → translate(pan) → scale(zoom). Canvas
  * transforms apply outermost-first, so this yields exactly
@@ -35,7 +37,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useEditorStore } from '../state/editorStore';
 import type { ToolOptions } from '../state/types';
 import type { DocumentState, Selection, ToolId, ViewState } from '../engine/types';
-import { composeDocument } from '../engine/render';
+import { composeDocument, publishSharedComposite } from '../engine/render';
 import { makeCanvas, paintChecker, type AnyCanvas } from '../engine/raster';
 import {
   docToScreen,
@@ -250,6 +252,8 @@ export default function CanvasStage() {
   const antsAccRef = useRef(0);
   const antsPhaseRef = useRef(0);
   const interactedRef = useRef(false);
+  /** set inside the main effect — starts the rAF loop when it is stopped */
+  const ensureLoopRef = useRef<() => void>(() => {});
 
   /* pointer / gesture state */
   const pointersRef = useRef(new Map<number, PointerTrack>());
@@ -268,15 +272,18 @@ export default function CanvasStage() {
 
   const markDisplay = useCallback((): void => {
     dispDirtyRef.current = true;
+    ensureLoopRef.current();
   }, []);
 
   const markOverlay = useCallback((): void => {
     ovlDirtyRef.current = true;
+    ensureLoopRef.current();
   }, []);
 
   const markAll = useCallback((): void => {
     dispDirtyRef.current = true;
     ovlDirtyRef.current = true;
+    ensureLoopRef.current();
   }, []);
 
   const applyCursor = useCallback((): void => {
@@ -339,6 +346,8 @@ export default function CanvasStage() {
         compositeRef.current = canvas;
       }
       composeDocument(doc, { target: canvas });
+      // share with cheap consumers (navigator preview) so they skip recomposing
+      publishSharedComposite(doc, canvas);
     };
 
     rebuildComposite(useEditorStore.getState().doc);
@@ -500,16 +509,18 @@ export default function CanvasStage() {
       }
     };
 
-    /* ---------- render loop ---------- */
+    /* ---------- render loop (idles to a full stop when nothing is dirty) ---------- */
 
     let lastTime = performance.now();
+    let loopRunning = false;
+
     const frame = (now: number): void => {
-      rafRef.current = requestAnimationFrame(frame);
       const dt = now - lastTime;
       lastTime = now;
 
       // ants animation at ~15 fps while a selection exists
-      if (useEditorStore.getState().selection) {
+      const hasSelection = !!useEditorStore.getState().selection;
+      if (hasSelection) {
         antsAccRef.current += dt;
         if (antsAccRef.current >= ANTS_INTERVAL_MS) {
           antsAccRef.current %= ANTS_INTERVAL_MS;
@@ -526,6 +537,9 @@ export default function CanvasStage() {
       const disp = displayRef.current;
       if (disp && (dprRef.current !== dpr || disp.width !== Math.max(1, Math.round(w * dpr)) || disp.height !== Math.max(1, Math.round(h * dpr)))) {
         resizeCanvases(w, h);
+        // the backing store was reallocated — repaint it even when idle
+        dispDirtyRef.current = true;
+        ovlDirtyRef.current = true;
       }
 
       if (dispDirtyRef.current) {
@@ -536,8 +550,24 @@ export default function CanvasStage() {
         ovlDirtyRef.current = false;
         drawOverlay();
       }
+
+      // idle-stop: nothing dirty, no ants animation → stop scheduling frames.
+      // markDisplay/markOverlay/markAll/pointer events restart the loop.
+      if (!dispDirtyRef.current && !ovlDirtyRef.current && !hasSelection) {
+        loopRunning = false;
+        return;
+      }
+      rafRef.current = requestAnimationFrame(frame);
     };
-    rafRef.current = requestAnimationFrame(frame);
+
+    const startLoop = (): void => {
+      if (loopRunning) return;
+      loopRunning = true;
+      lastTime = performance.now();
+      rafRef.current = requestAnimationFrame(frame);
+    };
+    ensureLoopRef.current = startLoop;
+    startLoop();
 
     /* ---------- store subscriptions (imperative, high-frequency) ---------- */
 
@@ -630,6 +660,37 @@ export default function CanvasStage() {
       }
     };
 
+    /* ---------- double-tap-to-zoom (touch only, stroke-safe) ----------
+     * Two quick single-finger taps (<300ms apart, <20px movement) toggle
+     * between fit-to-screen and 100% zoom anchored at the tap point.
+     * Guards make it impossible to fight the tool layer: the zoom only ever
+     * fires for taps that dispatched NO tool stroke (e.g. hand-tool taps),
+     * never after a pinch (multi) and never after a drag (moved). */
+    const DOUBLE_TAP_MS = 300;
+    const DOUBLE_TAP_DIST = 20;
+    let lastTap: { t: number; x: number; y: number } | null = null;
+    let tapGesture: { t0: number; x: number; y: number; moved: boolean; stroked: boolean; multi: boolean } | null = null;
+
+    const endTapGesture = (e: PointerEvent, cancelled: boolean): void => {
+      const tap = tapGesture;
+      tapGesture = null;
+      if (!tap || cancelled || tap.moved || tap.multi || tap.stroked) return;
+      const now = performance.now();
+      if (now - tap.t0 > DOUBLE_TAP_MS) return; // both taps must be quick
+      const p = localPoint(e.clientX, e.clientY);
+      const prev = lastTap;
+      lastTap = { t: now, x: p.x, y: p.y };
+      if (!prev || now - prev.t > DOUBLE_TAP_MS || Math.hypot(p.x - prev.x, p.y - prev.y) > DOUBLE_TAP_DIST) return;
+      lastTap = null; // consume the pair so a third tap starts fresh
+      const st = useEditorStore.getState();
+      if (Math.abs(st.view.zoom - 1) < 0.01) {
+        const { w, h } = sizeRef.current;
+        if (w > 0 && h > 0) st.fitToScreen(w, h);
+      } else {
+        st.zoomBy(1 / st.view.zoom, p.x, p.y); // exactly 100%, anchored under the tap
+      }
+    };
+
     /* ---------- pointer handlers ---------- */
 
     const onPointerDown = (e: PointerEvent): void => {
@@ -647,6 +708,13 @@ export default function CanvasStage() {
       hoverPosRef.current = p;
       hoveringRef.current = true;
       interactedRef.current = true;
+
+      // double-tap tracking: single touch pointer only, aborted by any company
+      if (pointersRef.current.size > 1) {
+        if (tapGesture) tapGesture.multi = true;
+      } else if (e.pointerType === 'touch') {
+        tapGesture = { t0: performance.now(), x: p.x, y: p.y, moved: false, stroked: false, multi: false };
+      }
 
       const st = useEditorStore.getState();
 
@@ -677,6 +745,7 @@ export default function CanvasStage() {
       if (controller?.onPointerDown) {
         controller.onPointerDown(eventFromPointer(e, 'down'), toolContext());
         toolDragRef.current = true;
+        if (tapGesture) tapGesture.stroked = true; // a stroking tap never zooms
       }
       markOverlay();
     };
@@ -693,6 +762,12 @@ export default function CanvasStage() {
       if (tracked) {
         tracked.x = p.x;
         tracked.y = p.y;
+      }
+
+      // double-tap tracking: movement or extra fingers disqualify the tap
+      if (tapGesture) {
+        if (pointersRef.current.size >= 2) tapGesture.multi = true;
+        if (Math.hypot(p.x - tapGesture.x, p.y - tapGesture.y) > DOUBLE_TAP_DIST) tapGesture.moved = true;
       }
 
       // pinch zoom + two-finger pan (≥ 2 pointers are always a pinch)
@@ -739,6 +814,7 @@ export default function CanvasStage() {
 
     const finishPointer = (e: PointerEvent, cancelled: boolean): void => {
       pointersRef.current.delete(e.pointerId);
+      endTapGesture(e, cancelled); // may fire the double-tap zoom (non-stroke taps only)
 
       if (pointersRef.current.size >= 2) {
         rebaselinePinch(); // continue pinching with the remaining pair
@@ -846,6 +922,8 @@ export default function CanvasStage() {
       panRef.current = null;
       toolDragRef.current = false;
       stalePointerRef.current = null;
+      tapGesture = null;
+      lastTap = null;
       applyCursor();
       markOverlay();
     };
@@ -898,6 +976,8 @@ export default function CanvasStage() {
 
     return () => {
       cancelAnimationFrame(rafRef.current);
+      loopRunning = false;
+      ensureLoopRef.current = () => {};
       unsubscribe();
       resizeObserver.disconnect();
       container.removeEventListener('pointerdown', onPointerDown);

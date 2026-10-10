@@ -8,7 +8,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEditorStore } from '../../state/editorStore';
-import { composeDocument } from '../../engine/render';
+import { getSharedComposite } from '../../engine/render';
+import { paintChecker } from '../../engine/raster';
 import { useI18n } from '../../i18n';
 import { dispatchFit } from '../commands';
 import { Button } from '@/components/ui/button';
@@ -39,19 +40,21 @@ export default function NavigatorPanel() {
   const dispW = Math.max(1, Math.round(doc.width * scale));
   const dispH = Math.max(1, Math.round(doc.height * scale));
 
-  /* debounced preview render */
+  /* debounced preview render — reuses the viewport's cached composite when it
+     is fresh for this doc (CanvasStage publishes it), so no full recompose. */
   useEffect(() => {
     const timer = setTimeout(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.width = dispW;
       canvas.height = dispH;
-      const composite = composeDocument(doc, { checker: true });
+      const composite = getSharedComposite(doc);
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.clearRect(0, 0, dispW, dispH);
+        paintChecker(ctx, 0, 0, dispW, dispH, 8); // same checker the old checker:true compose drew
         ctx.drawImage(composite as unknown as CanvasImageSource, 0, 0, dispW, dispH);
       }
     }, 300);

@@ -100,8 +100,75 @@ export function canvasBytes(canvas: AnyCanvas): number {
 }
 
 /**
+ * Cached checkerboard tiles/patterns per (cell, light, dark). Building the
+ * pattern once turns the per-frame fillRect loop into a single pattern fill.
+ * CanvasPattern objects are not bound to their creating context, so one
+ * cached pattern serves the viewport, the composite buffer and the navigator.
+ */
+const checkerPatterns = new Map<string, CanvasPattern>();
+
+function buildCheckerTile(cell: number, light: string, dark: string): AnyCanvas {
+  const tile = makeCanvas(cell * 2, cell * 2);
+  const tctx = ctx2d(tile);
+  tctx.fillStyle = light;
+  tctx.fillRect(0, 0, cell * 2, cell * 2);
+  tctx.fillStyle = dark;
+  tctx.fillRect(0, 0, cell, cell);
+  tctx.fillRect(cell, cell, cell, cell);
+  return tile;
+}
+
+function getCheckerPattern(ctx: AnyContext2D, cell: number, light: string, dark: string): CanvasPattern | null {
+  const c = Math.max(1, Math.round(cell));
+  const key = `${c}|${light}|${dark}`;
+  let pattern = checkerPatterns.get(key) ?? null;
+  if (!pattern) {
+    try {
+      pattern = ctx.createPattern(buildCheckerTile(c, light, dark), 'repeat');
+    } catch {
+      pattern = null;
+    }
+    if (pattern) {
+      checkerPatterns.set(key, pattern);
+      if (checkerPatterns.size > 32) checkerPatterns.clear(); // bounded cache
+    }
+  }
+  return pattern;
+}
+
+/** Legacy fillRect checker loop — fallback when createPattern is unavailable. */
+function paintCheckerRects(
+  ctx: AnyContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  cell: number,
+  light: string,
+  dark: string,
+): void {
+  ctx.fillStyle = light;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = dark;
+  const startX = Math.floor(x / cell) * cell;
+  const startY = Math.floor(y / cell) * cell;
+  for (let yy = startY; yy < y + h; yy += cell) {
+    for (let xx = startX; xx < x + w; xx += cell) {
+      if ((Math.round((xx - startX) / cell) + Math.round((yy - startY) / cell)) % 2 === 0) {
+        ctx.fillRect(xx, yy, cell, cell);
+      }
+    }
+  }
+}
+
+/**
  * Renders a checkerboard transparency pattern onto a canvas context.
  * Used behind documents so transparency is visible.
+ *
+ * Alignment (identical to the legacy path): dark cells sit on a grid anchored
+ * at (floor(x/cell)*cell, floor(y/cell)*cell) with parity counted from that
+ * anchor, so the checker keeps its phase relative to the document rectangle
+ * across pan/zoom. The pattern is drawn through a translate to that anchor.
  */
 export function paintChecker(
   ctx: AnyContext2D,
@@ -117,17 +184,16 @@ export function paintChecker(
   ctx.beginPath();
   ctx.rect(x, y, w, h);
   ctx.clip();
-  ctx.fillStyle = light;
-  ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = dark;
-  const startX = Math.floor(x / cell) * cell;
-  const startY = Math.floor(y / cell) * cell;
-  for (let yy = startY; yy < y + h; yy += cell) {
-    for (let xx = startX; xx < x + w; xx += cell) {
-      if ((Math.round((xx - startX) / cell) + Math.round((yy - startY) / cell)) % 2 === 0) {
-        ctx.fillRect(xx, yy, cell, cell);
-      }
-    }
+  const c = Math.max(1, Math.round(cell));
+  const pattern = getCheckerPattern(ctx, c, light, dark);
+  if (pattern) {
+    const startX = Math.floor(x / c) * c;
+    const startY = Math.floor(y / c) * c;
+    ctx.translate(startX, startY);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(x - startX, y - startY, w, h);
+  } else {
+    paintCheckerRects(ctx, x, y, w, h, c, light, dark);
   }
   ctx.restore();
 }

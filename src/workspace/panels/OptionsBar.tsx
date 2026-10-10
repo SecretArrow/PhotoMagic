@@ -44,7 +44,10 @@ const MODE_ITEMS = [
 
 function Bar({ children }: { children: React.ReactNode }) {
   return (
-    <div className="pf-scroll flex h-10 shrink-0 items-center gap-3 overflow-x-auto border-b border-[#2c2d33] bg-[#1e1f24] px-3">
+    // Sliders/selects inside a content-sized row collapse to 0px (flex-1 with
+    // no basis) — give them explicit floors so the strip stays usable on
+    // narrow (and desktop) viewports; the bar itself scrolls horizontally.
+    <div className="pf-scroll flex h-10 shrink-0 items-center gap-3 overflow-x-auto border-b border-[#2c2d33] bg-[#1e1f24] px-3 [&_[data-slot=select-trigger]]:min-w-32 [&_[data-slot=slider]]:w-24 [&_[data-slot=slider]]:shrink-0">
       {children}
     </div>
   );

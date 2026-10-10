@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * SettingsDialog — language, autosave, rulers/grid/snap preferences.
+ * SettingsDialog — language, autosave, grid/snap preferences.
  * Writes through store.updateSettings (autosave restart is handled by
  * EditorRoot's effect on settings).
  */
@@ -53,7 +53,6 @@ export default function SettingsDialog({ open, onOpenChange }: WorkspaceDialogPr
               ariaLabel={t('dialog.settings.autosaveInterval')}
             />
           </div>
-          <SwitchRow label={t('dialog.settings.rulers')} checked={settings.rulersVisible} onCheckedChange={(v) => update({ rulersVisible: v })} />
           <SwitchRow label={t('dialog.settings.grid')} checked={settings.gridVisible} onCheckedChange={(v) => update({ gridVisible: v })} />
           {settings.gridVisible ? (
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">

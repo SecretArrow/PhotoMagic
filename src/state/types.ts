@@ -109,7 +109,6 @@ export interface EditorSettings {
   language: 'en' | 'id';
   autosaveEnabled: boolean;
   autosaveIntervalSec: number;
-  rulersVisible: boolean;
   gridVisible: boolean;
   gridSize: number;
   snapEnabled: boolean;
@@ -138,13 +137,14 @@ export type RightPanelId =
   | 'adjustments'
   | 'color'
   | 'navigator'
+  | 'histogram'
   | 'properties';
 
 export interface UiState {
   dialog: DialogId;
   rightPanel: RightPanelId;
   panelsVisible: boolean;
-  mobilePanel: null | 'layers' | 'history' | 'adjustments' | 'color' | 'properties';
+  mobilePanel: null | 'layers' | 'history' | 'adjustments' | 'color' | 'histogram' | 'properties';
   mobileToolbarSheet: boolean;
   statusBarVisible: boolean;
   presentationMode: boolean;

@@ -6,26 +6,36 @@
  * full tools grid sheet. Panel components are shared with the desktop shell.
  */
 
-import { useRef } from 'react';
+import { useRef, type ChangeEvent } from 'react';
 import { useEditorStore } from '../state/editorStore';
 import type { UiState } from '../state/types';
 import CanvasStage from '../canvas/CanvasStage';
 import { useI18n } from '../i18n';
 import type { TranslationKey } from '../i18n/dictionaries';
-import { dispatchFit } from './commands';
+import { dispatchFit, handleOpenFiles } from './commands';
 import { MOBILE_TOOL_ORDER, TOOL_ORDER, toolIcon, toolLabelKey } from './toolMeta';
+import OptionsBar from './panels/OptionsBar';
 import LayersPanel from './panels/LayersPanel';
 import HistoryPanel from './panels/HistoryPanel';
 import AdjustmentsPanel from './panels/AdjustmentsPanel';
 import ColorPanel from './panels/ColorPanel';
+import HistogramPanel from './panels/HistogramPanel';
 import PropertiesPanel from './panels/PropertiesPanel';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Download,
   LayoutGrid,
   Maximize,
+  MoreHorizontal,
   PanelBottom,
   Plus,
   Redo2,
@@ -37,6 +47,7 @@ const MOBILE_TABS: { id: NonNullable<UiState['mobilePanel']>; labelKey: Translat
   { id: 'history', labelKey: 'panel.history' },
   { id: 'adjustments', labelKey: 'panel.adjustments' },
   { id: 'color', labelKey: 'panel.color' },
+  { id: 'histogram', labelKey: 'panel.histogram' },
   { id: 'properties', labelKey: 'panel.properties' },
 ];
 
@@ -51,6 +62,14 @@ export default function MobileWorkspace() {
   const setMobilePanel = useEditorStore((s) => s.setMobilePanel);
   const setMobileToolbarSheet = useEditorStore((s) => s.setMobileToolbarSheet);
   const workRef = useRef<HTMLDivElement | null>(null);
+  /** hidden picker for "Open image…" — feeds the shared handleOpenFiles pipeline */
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const onImportFile = (e: ChangeEvent<HTMLInputElement>): void => {
+    const files = e.target.files;
+    if (files && files.length > 0) void handleOpenFiles(files);
+    e.target.value = ''; // allow re-picking the same file
+  };
 
   /** zoom to exactly 100% keeping the viewport center anchored */
   const zoomTo100 = (): void => {
@@ -65,33 +84,52 @@ export default function MobileWorkspace() {
     <div className="flex h-full min-h-0 flex-col">
       {/* top bar (safe-area aware) */}
       <div
-        className="flex h-11 shrink-0 items-center gap-1 border-b border-[#2c2d33] bg-[#1b1c20] px-2"
+        className="flex min-h-11 shrink-0 items-center gap-1 border-b border-[#2c2d33] bg-[#1b1c20] px-2"
         style={{ paddingTop: 'var(--pf-safe-top)' }}
       >
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{doc.name}</span>
-        <Button variant="ghost" size="icon" className="size-9" aria-label={t('mobile.undo')} disabled={history.index < 0} onClick={() => useEditorStore.getState().undo()}>
-          <Undo2 className="size-4" />
+        <Button variant="ghost" size="icon" className="size-11" aria-label={t('mobile.undo')} disabled={history.index < 0} onClick={() => useEditorStore.getState().undo()}>
+          <Undo2 className="size-5" />
         </Button>
         <Button
           variant="ghost"
-          size="icon" className="size-9"
+          size="icon" className="size-11"
           aria-label={t('mobile.redo')}
           disabled={history.index >= history.entries.length - 1}
           onClick={() => useEditorStore.getState().redo()}
         >
-          <Redo2 className="size-4" />
+          <Redo2 className="size-5" />
         </Button>
         <Button
           variant="ghost"
-          size="icon" className="size-9"
+          size="icon" className="size-11"
           aria-label={t('mobile.panels')}
           onClick={() => setMobilePanel(mobilePanel ?? 'layers')}
         >
-          <PanelBottom className="size-4" />
+          <PanelBottom className="size-5" />
         </Button>
-        <Button variant="ghost" size="icon" className="size-9" aria-label={t('file.export')} onClick={() => useEditorStore.getState().setDialog('export')}>
-          <Download className="size-4" />
+        <Button variant="ghost" size="icon" className="size-11" aria-label={t('file.export')} onClick={() => useEditorStore.getState().setDialog('export')}>
+          <Download className="size-5" />
         </Button>
+        {/* ⋯ overflow menu — the mobile entry point for file/dialog commands */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="size-11" aria-label={t('mobile.more')}>
+              <MoreHorizontal className="size-5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="bottom" className="w-56">
+            <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>{t('mobile.openImage')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('new-document')}>{t('file.new')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('image-size')}>{t('image.imageSize')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('canvas-size')}>{t('image.canvasSize')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('filter-gallery')}>{t('filter.gallery')}</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('settings')}>{t('edit.preferences')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('storage')}>{t('dialog.settings.storage')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => useEditorStore.getState().setDialog('about')}>{t('help.about')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* canvas + floating zoom */}
@@ -132,6 +170,20 @@ export default function MobileWorkspace() {
           </button>
         </div>
       </div>
+
+      {/* hidden image picker — same handleOpenFiles pipeline as the desktop menu */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={onImportFile}
+      />
+
+      {/* context-sensitive tool options (crop apply/cancel, brush sliders…) */}
+      <OptionsBar />
 
       {/* tool dock (safe-area aware) */}
       <div
@@ -176,9 +228,9 @@ export default function MobileWorkspace() {
             onValueChange={(v) => setMobilePanel(v as UiState['mobilePanel'])}
             className="flex h-full min-h-0 flex-col gap-0"
           >
-            <TabsList className="h-9 w-full shrink-0 justify-start rounded-none border-b border-[#2c2d33] bg-[#1b1c20] p-1">
+            <TabsList className="h-13 w-full shrink-0 justify-start rounded-none border-b border-[#2c2d33] bg-[#1b1c20] p-1">
               {MOBILE_TABS.map((tab) => (
-                <TabsTrigger key={tab.id} value={tab.id} className="h-7 px-2 text-[10px]">
+                <TabsTrigger key={tab.id} value={tab.id} className="min-h-11 px-1 text-[10px]">
                   {t(tab.labelKey)}
                 </TabsTrigger>
               ))}
@@ -238,6 +290,8 @@ function MobileTabBody({ id }: { id: NonNullable<UiState['mobilePanel']> }) {
       return <AdjustmentsPanel />;
     case 'color':
       return <ColorPanel />;
+    case 'histogram':
+      return <HistogramPanel />;
     case 'properties':
       return <PropertiesPanel />;
     default:

@@ -197,3 +197,97 @@ Stage Summary:
 - 90/90 tests pass (71 old + 13 PSD + 6 segmentation), tsc clean, eslint 0 errors, dev.log clean
 - Repo leaner: 3 dead deps + 6 template files removed
 - v1.1 features shipped: on-device AI background removal, layered PSD export, 10 crop aspect presets, mobile touch targets + 1:1 zoom, renderer fast path, display-refresh bug fix
+
+---
+Task ID: 9-a
+Agent: cleanup
+Task: Remove dead code, unused components, and unused dependencies (repo lean-up)
+
+Work Log:
+- Re-verified audit with grep before every deletion: 26 shadcn ui components have zero importers outside src/components/ui (rg "ui/(accordion|alert-dialog|alert|...)" excluding components/ui → no hits); pointerBus/logo.svg/tailwind.config zero references
+- Deleted 26 unused shadcn components from src/components/ui/: accordion, alert-dialog, alert, aspect-ratio, avatar, badge, breadcrumb, calendar, card, carousel, chart, checkbox, collapsible, command, drawer, form, hover-card, input-otp, navigation-menu, pagination, sidebar, skeleton, sonner, table, toggle, toggle-group (kept the 22 in use: button, input, label, textarea, slider, select, switch, popover, tooltip, dialog, sheet, tabs, menubar, dropdown-menu, context-menu, progress, separator, scroll-area, radio-group, resizable, toast, toaster)
+- Deleted dead files: src/canvas/pointerBus.ts (zero imports; only a doc-comment mention in StatusBar.tsx — updated that comment to drop the stale file reference), public/logo.svg (zero refs), tailwind.config.ts (Tailwind v4 CSS-first via @tailwindcss/postcss; no @config in globals.css)
+- Removed 33 deps from package.json after per-package grep confirmed zero imports in src/, scripts/, tests/: @mdxeditor/editor, @reactuses/core, @tanstack/react-query, @tanstack/react-table, date-fns, framer-motion, next-auth, react-markdown, react-syntax-highlighter, uuid, z-ai-web-dev-sdk, zod, cmdk, vaul, react-day-picker, react-hook-form, @hookform/resolvers, input-otp, recharts, sonner, next-themes, embla-carousel-react, tailwindcss-animate + radix wrappers of deleted components (@radix-ui/react-accordion, react-alert-dialog, react-aspect-ratio, react-avatar, react-checkbox, react-collapsible, react-hover-card, react-navigation-menu, react-toggle, react-toggle-group)
+- Kept-with-reason (grep-verified in use): sharp (scripts/gen-icons.mjs), @dnd-kit/* (LayersPanel), react-resizable-panels (ui/resizable), zustand, clsx + tailwind-merge (lib/utils), class-variance-authority (button/toast), lucide-react, tw-animate-css (globals.css @import), next/react/react-dom, tailwindcss + @tailwindcss/postcss, all remaining @radix-ui packages map 1:1 to kept ui wrappers, all dev deps
+- Template leftovers: package.json name "nextjs_tailwind_shadcn_ts" → "pixelforge-studio"; next.config.ts removed typescript.ignoreBuildErrors (tsc clean) — reactStrictMode untouched; postcss.config.mjs / eslint.config.mjs / components.json checked — no references to deleted files
+- bun install → exit 0, 33 packages removed, bun.lock regenerated (-738 lines)
+
+Stage Summary:
+- Gates: bunx tsc --noEmit exit 0; bunx vitest run → 90/90 (8 files); bunx eslint . → 0 errors (16 pre-existing warnings, untouched files); rg confirms zero remaining imports of any deleted module/dep/file; git diff --stat: 33 files changed, +5/−4289 (plus bun.lock −738)
+- Repo leaner: 29 dead files deleted, 33 deps removed, template name + ignoreBuildErrors fixed
+- No code behavior changed; all 22 in-use ui components and all app modules intact
+
+---
+Task ID: 9-b
+Agent: perf
+Task: Canvas/render pipeline perf optimizations — slider history coalescing, per-layer thumbnail cache, idle-stop rAF loop, cached checker pattern (+ navigator shared-composite stretch)
+
+Work Log:
+- Read worklog, editorStore, history/index, render.ts, raster.ts, CanvasStage.tsx, controls.tsx, all 5 panels, engine/types + document; confirmed history entries store before/after whole-layer object references (cheap snapshots restored via replaceLayer), and that raster canvases mutate IN PLACE (brush/fill/retouch/filters all commit via commitPixelEdit without changing canvas identity) — so canvas-ref keying was NOT viable and a store-driven per-layer version counter was required.
+- (1) History spam fix — new append-only store API in src/state/editorStore.ts:
+  - `beginLayerEdit(id)` (:565) captures the pre-drag layer object into module-level `pendingLiveEdits` Map (first snapshot wins; idempotent per id), `updateLayerLive(id, patch)` (:554) mutates layer + bumps revision + bumps thumbnail version with NO history, `endLayerEdit(id, labelKey, labelFallback)` (:572) pushes exactly ONE 'layer-prop' entry: undo restores the begin-snapshot, redo restores the post-drag layer (same entry shape as updateLayer, so jumpTo walks stay consistent). No-ops safely: end without begin, deleted layer, or drag that ends where it started (shallow union-key equality).
+  - undo()/redo()/jumpHistory() clear pending snapshots first (a live drag can never capture a rewound state).
+  - Wired sliders: LayersPanel opacity (:183), PropertiesPanel fontSize + shape strokeWidth + adjustment-layer params (AdjustmentParamsEditor got optional onCommit threaded to every param slider via new ParamSlider wrapper) — onValueChange → begin+live, onValueCommit (Radix release + NumInput blur/Enter) → single end.
+  - Also fixed color-picker spam: ColorPickerButton got optional onCommit fired on popover close; text color / shape fill+stroke / fill-layer pickers now begin+live per HSV move and push ONE entry on close.
+  - controls.tsx: additive `onCommit` props on NumInput (fired on blur/Enter, always, so no-change commits still close the session) and ColorPickerButton; SliderRow threads onValueCommit into NumInput.
+- (2) Per-layer thumbnail cache — src/engine/render.ts: module-level `pixelVersions` Map + exported `bumpLayerPixelVersion(s)`; layerThumbnail cache signature is now `layerId|pixelVersion|visible|docWxdocH` (Map still keyed by layer.id; `revision` param kept in signature but advisory — LayersPanel keeps threading it to force row re-render). Mask thumbnails re-keyed on mask-canvas reference identity (own map; masks are only replaced, never painted in place). Store bumps versions at: updateLayer/updateLayerLive (skipped when every patch key is thumbnail-invariant: visible/opacity/blendMode/locked/expanded/name/clipToBelow/mask/filters/adjustment — so opacity drags regenerate zero thumbs), commitPixelEdit, mergeDown, rasterizeToCanvas, undo/redo/jumpHistory + resize/resizeCanvas/crop/flip/rotate + doc create/open/switch (bump-all walk incl. group children). Verified thumbnails still update after brush stroke, gaussian blur (worker path), filter undo/redo (data URL changes on undo, restored on redo).
+- (3) Idle-stop rAF loop — src/canvas/CanvasStage.tsx: frame() no longer pre-schedules; after drawing it stops when both dirty flags are clear AND no selection exists (ants keep the loop alive; accumulator resets when selection cleared). Component-level markDisplay/markOverlay/markAll call `ensureLoopRef.current()` (set to effect-local startLoop) so every store-subscription/effect/pointer/resize/tool-invalidate event restarts the loop; startLoop resets lastTime to avoid a giant first dt. DPR-resync inside frame now marks both flags (backing store was reallocated). Verified by rAF-counter probe: 0 frames over 2s idle (was ~120), 1 frame per pointermove, continuous while marching ants, 0 again after deselect.
+- (4) Checker pattern cache — src/engine/raster.ts: 2cell×2cell tile (light bg + dark cells at (0,0)/(cell,cell)) → ctx.createPattern cached per (cell|light|dark) in module Map (bounded 32); paintChecker clips, translates to the legacy anchor (floor(x/cell)*cell, floor(y/cell)*cell) and fills once — mathematically identical alignment to the old fillRect loop (same anchor formula + same col+row-even parity). Legacy fillRect loop kept as paintCheckerRects fallback when createPattern returns null/throws. Verified in browser: sampled display-canvas rows show exact 8px #e3e3e6/#c8c8cd runs on 8px grid boundaries, and the phase-vs-doc-edge shift after a 37px pan matches the legacy algorithm.
+- STRETCH (done): shared composite — render.ts `publishSharedComposite`/`getSharedComposite`; CanvasStage publishes its GPU-primed composite after each rebuild; NavigatorPanel now draws the shared composite + a preview-space paintChecker(8) instead of composeDocument(checker:true) per revision, eliminating a full doc recompose 300ms after every edit while the navigator is visible (falls back to composing itself when no fresh stage composite exists).
+- tests/unit/store-live-edit.test.ts (new, 8 tests, node env with document/canvas stub + post-stub dynamic store import): one-entry-per-drag, undo/redo restore, live-alone no history + revision bump, end-without-begin no-op, start==end no-op, undo clears pending snapshot, text-param live edit undo/redo, begin idempotency (first snapshot wins).
+
+Stage Summary:
+- Files modified: src/state/editorStore.ts (3 new actions + version bumps + pending-edit clearing; existing signatures untouched), src/engine/render.ts (per-layer thumb cache + bump exports + shared composite), src/engine/raster.ts (cached checker pattern + legacy fallback), src/canvas/CanvasStage.tsx (idle-stop loop + composite publish), src/workspace/panels/{controls,LayersPanel,PropertiesPanel,AdjustmentsPanel,NavigatorPanel}.tsx (slider/picker wiring; HistoryPanel needed no change), tests/unit/store-live-edit.test.ts (new)
+- History-commit design: begin-snapshot/end-commit with whole-layer object refs (identical entry shape to updateLayer) — one undo step per drag, undo restores pre-drag value (verified in browser: opacity drag → 1 entry, undo → 100%, redo → 23%; fontSize drag → 1 'Edit text' entry, undo → 48)
+- Gates: bunx tsc --noEmit → 0; bunx vitest run → 98/98 (90 pre-existing + 8 new); eslint on all 11 changed files → 0 errors 0 warnings; dev server HTTP 200 + agent-browser smoke (brush stroke, opacity/fontSize drags, gaussian blur, thumbnails, navigator, checker alignment, rAF idle probes) — no console/page errors; server killed after testing
+- Behavior notes: (a) typing in a SliderRow number field now coalesces to one entry on blur/Enter (was one per keystroke); (b) navigator checker cell size is 8 preview px (was doc-resolution checker scaled down) — same visual role; (c) undo/redo/jumpHistory now bump all layer thumbnail versions (cost: O(layers) map increments, no renders); (d) OptionsBar sliders use updateToolOptions (no history) — untouched, out of ownership.
+
+---
+Task ID: 10
+Agent: mobile-ux
+Task: Mobile UX — ⋯ overflow menu, image import, tool options strip, 44px touch targets, double-tap-to-zoom
+
+Work Log:
+- Read worklog (8, 9-a, 9-b), MobileWorkspace, MenuBar, OptionsBar, DialogHost, editorStore UI slice, dictionaries, CanvasStage, controls/tabs/dropdown-menu wrappers, commands.ts.
+- (1) Mobile top bar "⋯" menu — MobileWorkspace.tsx: size-11 MoreHorizontal trigger + DropdownMenu (w-56, align end) mirroring MenuBar triggers via the SAME store mechanisms (no parallel state): Open image… (own hidden input), New…/Image size…/Canvas size…/Filter gallery… via setDialog('new-document'|'image-size'|'canvas-size'|'filter-gallery'), separator, Preferences/Storage/About via setDialog('settings'|'storage'|'about'). FilterDialog opens gallery-mode with no preselected filter (handles extras.filterDialog.op === null); all other dialogs already mounted in DialogHost.
+- (2) Mobile image import — MobileWorkspace.tsx hidden <input type=file accept="image/*"> (:173-181) → onChange feeds shared handleOpenFiles (commands.ts) → importImageLayer/addLayer/openDocument + toasts; same pipeline as MenuBar/desktop, value reset for re-picks. Top bar also grew min-h-11 (was fixed h-11) so safe-area padding can't clip the 44px buttons.
+- (3) Tool options on mobile — <OptionsBar /> mounted between canvas area and bottom dock (MobileWorkspace.tsx:184); OptionsBar already contains ONLY tool-specific controls (verified: no tools/undo/redo/zoom duplication — complementary). Found + fixed pre-existing bug in OptionsBar Bar (:45-54): sliders (flex-1, no basis) collapsed to 0px width inside the content-sized overflow-x row (also broken on desktop) — added [&_[data-slot=slider]]:w-24/shrink-0 + [&_[data-slot=select-trigger]]:min-w-32 floors; bar itself scrolls (scrollWidth 1816 @390px). Crop apply/cancel note: no apply/cancel buttons ever existed — commit is canvas double-tap/double-click (crop.ts dblClick) or Enter, cancel = switch tool; aspect presets are now reachable on mobile via the strip.
+- (4) Touch targets — top bar Undo/Redo/Panels/Export size-9→size-11 (icons size-4→size-5), new ⋯ size-11; panel sheet TabsList h-9→h-13 + TabsTrigger h-7→min-h-11 (flex-1 kept from wrapper) — measured 5×44px tall, 76px wide, no overflow at 390px. Dock/zoom cluster already 44px from Task 8. Remaining sub-44px shared desktop controls (OptionsBar NumInput h-6, SliderRow thumb, ToggleChip h-6) left untouched — shared with desktop panels, would regress desktop density; noted for a future pass.
+- (5) STRETCH double-tap-to-zoom — CanvasStage.tsx effect-local tap tracker (:663-692 + hooks at :712-717, :748, :767-771, :817, blur reset :925-926): two single-finger touch taps <300ms apart, <20px movement → toggles fitToScreen ↔ 100% (zoomBy(1/zoom) anchored at tap point). Stroke-safe by construction: zoom only fires when the tap dispatched NO tool stroke (hand-tool taps), never after pinch (multi flag) or drag (moved flag); cleared on window blur. Verified: hand double-tap 0.274→1.0→0.274 with zero history entries; brush double-tap → zoom unchanged, strokes/history unchanged (2 tap-strokes = pre-existing behavior).
+- i18n: added 'mobile.openImage' en 'Open image…' / id 'Buka gambar…' (only missing key; all other labels reuse existing keys in both languages).
+
+Stage Summary:
+- Files modified: src/workspace/MobileWorkspace.tsx (⋯ menu + hidden import input + OptionsBar mount + 44px targets), src/workspace/panels/OptionsBar.tsx (Bar slider/select width floors — fixes 0px sliders desktop too), src/canvas/CanvasStage.tsx (additive double-tap-to-zoom, stroke/pinch-safe), src/i18n/dictionaries.ts (+1 key en+id)
+- Gates: bunx tsc --noEmit → 0; bunx vitest run → 98/98; eslint on all 4 changed files → 0 errors; dev server HTTP 200 + agent-browser at 390×844: ⋯ menu lists all 8 items, New document + Filter gallery dialogs open/close from it, hidden input[type=file][accept=image/*] in DOM, brush options strip (6 sliders 96px, drag 24→313 works), tabs 44px, no page horizontal overflow at 390px; desktop 1280×800: MenuBar shell intact, no mobile-only elements (⋯ buttons 0, accept=image/* input absent — only pre-existing GlobalKeys input), options sliders 96px (bug fix). Screenshots: download/verify-mobile-390-{menu,options,tabs}.png, download/verify-desktop-1280.png; dev server killed after.
+- Behavior notes: (a) double-tap zoom intentionally limited to non-stroke taps (hand tool) — firing it for paint/selection taps would corrupt stroke dispatch (first tap already commits ink), per task's "skip if it risks breaking stroke dispatch"; (b) desktop OptionsBar sliders were 0px-wide before this task (pre-existing) and are now 96px — desktop layout otherwise untouched.
+
+---
+Task ID: 11
+Agent: features (completed by orchestrator after agent timeout — all code was already written; orchestrator ran browser verification)
+Task: Quick-win features — export scale presets + AVIF, histogram panel, dead rulers-setting removal
+
+Work Log:
+- ExportDialog: scale preset chips 25%/50%/100%/200% next to scale slider (click sets value, active chip highlighted); AVIF format with async feature-detect (1×1 canvas toBlob probe, module-level cached promise) — option hidden gracefully when browser can't encode AVIF (verified: headless Chromium falls back to PNG → option absent, i18n note 'export.avifNote' en+id)
+- HistogramPanel (new src/workspace/panels/HistogramPanel.tsx): uses runHistogram (worker) on composited doc; RGB channel curves on small canvas; 250ms debounced recompute on revision change; mounted as desktop tab in RightPanels + mobile tab in MobileWorkspace sheet ('panel.histogram' en+id)
+- Rulers: removed dead rulersVisible setting from state/types, store default, GlobalKeys shortcut, MenuBar View toggle, SettingsDialog (audit: zero render sites); orphan i18n keys cleaned
+- Orchestrator browser verification: desktop histogram renders (white-doc spike at right), invert-on-layer → histogram CHANGED=true (checksum 9461641→9462023, debounced update works); export dialog chips work (50% click → slider 50); mobile 390×844 histogram tab renders (348×174 canvas); console clean (only pre-existing shadcn aria-describedby warning)
+
+Stage Summary:
+- Files: + src/workspace/panels/HistogramPanel.tsx; modified ExportDialog, RightPanels, MobileWorkspace, dictionaries, state/types, GlobalKeys, MenuBar, SettingsDialog
+- Gates: tsc 0 errors, vitest 98/98, eslint 0 errors on changed files, i18n parity 436=436 (scripts/i18n-parity.ts added as repo utility)
+- Screenshots: download/verify-histogram-{desktop,panel,after-stroke}.png, verify-export (dialog snapshot), verify-mobile-histogram.png
+
+---
+Task ID: 12
+Agent: main (Super Z)
+Task: v1.2 verification, worklog & release push
+
+Work Log:
+- Restored sandbox file-mode noise (166 files chmod 755→644, content untouched)
+- Health at start: tsc 0, 90/90 tests; audit via Explore subagent (26 unused ui components, 33 unused deps, mobile gaps, perf hotspots, quick-win features)
+- Wave 1 (parallel): Task 9-a cleanup + Task 9-b perf — see entries above
+- Wave 2: Task 10 mobile UX; Wave 3: Task 11 features — see entries above
+- Final gates: bunx tsc --noEmit → 0; bunx vitest run → 98/98 (9 files); eslint 0 errors; i18n parity 436=436; no console/page errors; browser smoke desktop + mobile pass
+
+Stage Summary:
+- v1.2 shipped: repo −4.4k lines (29 dead files, 33 deps), slider history coalescing (begin/updateLive/endLayerEdit), per-layer thumbnail cache, idle-stop rAF, checker pattern cache, shared composite for Navigator, mobile ⋯ menu + image import + tool options strip + 44px targets + double-tap zoom, export scale chips + AVIF (feature-detected), histogram panel (desktop+mobile), rulers setting removed, OptionsBar 0px-slider bug fixed, commitPixelEdit display-refresh intact

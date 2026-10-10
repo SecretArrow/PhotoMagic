@@ -58,6 +58,7 @@ export function SliderRow({ label, value, min, max, step = 1, onValueChange, onV
         min={min}
         max={max}
         onChange={onValueChange}
+        onCommit={onValueCommit}
         className="h-6 w-12 shrink-0 px-1 text-center text-[11px]"
         aria-label={label}
       />
@@ -70,6 +71,8 @@ export function SliderRow({ label, value, min, max, step = 1, onValueChange, onV
 interface NumInputProps {
   value: number;
   onChange: (v: number) => void;
+  /** Fired on blur/Enter after the value settled (used to end live-edit history sessions). */
+  onCommit?: (v: number) => void;
   min?: number;
   max?: number;
   step?: number;
@@ -78,7 +81,7 @@ interface NumInputProps {
 }
 
 /** Numeric input that tolerates partial typing and clamps on blur/enter. */
-export function NumInput({ value, onChange, min, max, step, className, ariaLabel }: NumInputProps) {
+export function NumInput({ value, onChange, onCommit, min, max, step, className, ariaLabel }: NumInputProps) {
   const [text, setText] = useState(String(value));
 
   useEffect(() => {
@@ -96,6 +99,7 @@ export function NumInput({ value, onChange, min, max, step, className, ariaLabel
     if (max !== undefined) v = Math.min(max, v);
     if (v !== value) onChange(v);
     setText(String(v));
+    onCommit?.(v);
   };
 
   return (
@@ -210,14 +214,20 @@ export function SelectRow({ label, value, onValueChange, items, className, conte
 interface ColorPickerButtonProps {
   color: string;
   onChange: (hex: string) => void;
+  /** Fired once when the picker popover closes (ends a live-edit history session). */
+  onCommit?: () => void;
   label: string;
   className?: string;
 }
 
 /** Small inline color swatch button with an HSV popover editor. */
-export function ColorPickerButton({ color, onChange, label, className }: ColorPickerButtonProps) {
+export function ColorPickerButton({ color, onChange, onCommit, label, className }: ColorPickerButtonProps) {
   return (
-    <Popover>
+    <Popover
+      onOpenChange={(open) => {
+        if (!open) onCommit?.();
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"

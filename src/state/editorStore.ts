@@ -54,6 +54,7 @@ import {
 } from '../engine/selections';
 import { createHistory, historyBytes, jumpTo, pushEntry, redo as historyRedo, undo as historyUndo, type HistoryStack } from '../history';
 import { imageDataFromCanvas, getRegion, putRegion, clipRectToCanvas, makeCanvas, ctx2d } from '../engine/raster';
+import { bumpLayerPixelVersion, bumpLayerPixelVersions } from '../engine/render';
 import { shiftLayerContent } from '../engine/transforms';
 import type {
   DialogId,
@@ -119,7 +120,6 @@ const defaultSettings: EditorSettings = {
   language: 'en',
   autosaveEnabled: true,
   autosaveIntervalSec: 30,
-  rulersVisible: true,
   gridVisible: false,
   gridSize: 50,
   snapEnabled: true,
@@ -174,6 +174,12 @@ export interface EditorStore {
   moveLayerTo(id: string, parentId: string | null, index: number): void;
   reorderSelected(delta: number): void;
   updateLayer(id: string, patch: Partial<Layer>, labelKey: string, labelFallback: string): void;
+  /** Live (no-history) layer patch for slider drags — pair with beginLayerEdit/endLayerEdit. */
+  updateLayerLive(id: string, patch: Partial<Layer>): void;
+  /** Captures the pre-drag snapshot for a live edit session (idempotent per id). */
+  beginLayerEdit(id: string): void;
+  /** Pushes ONE history entry restoring the beginLayerEdit snapshot (no-op when unchanged/absent). */
+  endLayerEdit(id: string, labelKey: string, labelFallback: string): void;
   mergeDown(id: string): void;
   mergeVisible(): void;
   flattenImage(): void;
@@ -289,6 +295,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   newDocument(opts) {
     const doc = createDocument(opts);
+    bumpAllLayerPixels(doc.layers); // guard against layer-id reuse across documents
     set((s) => ({
       doc,
       docs: [...s.docs, doc],
@@ -301,6 +308,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   openDocument(doc) {
+    bumpAllLayerPixels(doc.layers); // guard against layer-id reuse across documents
     set((s) => {
       const existing = s.docs.find((d) => d.id === doc.id);
       const docs = existing ? s.docs.map((d) => (d.id === doc.id ? doc : d)) : [...s.docs, doc];
@@ -332,6 +340,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setActiveDoc(id) {
     const target = get().docs.find((d) => d.id === id);
     if (!target) return;
+    bumpAllLayerPixels(target.layers); // guard against layer-id reuse across documents
     set((s) => ({ doc: target, activeDocId: id, selection: null, history: createHistory(), revision: bumpRevision(s.revision) }));
   },
 
@@ -540,6 +549,43 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       redo: () => set((s) => ({ doc: { ...s.doc, layers: replaceLayer(s.doc.layers, afterLayer) }, revision: bumpRevision(s.revision) })),
     };
     set((s) => ({ doc: { ...s.doc, layers: after, updatedAt: Date.now() }, revision: bumpRevision(s.revision) }));
+    if (patchAffectsThumbnail(patch)) bumpLayerPixelVersion(id);
+    get().commitEntry(entry);
+  },
+
+  updateLayerLive(id, patch) {
+    const current = getLayer(get().doc.layers, id);
+    if (!current) return;
+    const afterLayer = { ...current, ...patch } as Layer;
+    set((s) => ({
+      doc: { ...s.doc, layers: replaceLayer(s.doc.layers, afterLayer), updatedAt: Date.now() },
+      revision: bumpRevision(s.revision),
+    }));
+    if (patchAffectsThumbnail(patch)) bumpLayerPixelVersion(id);
+  },
+
+  beginLayerEdit(id) {
+    const layer = getLayer(get().doc.layers, id);
+    if (!layer) return;
+    // keep the FIRST snapshot of an interaction chain (idempotent per id)
+    if (!pendingLiveEdits.has(id)) pendingLiveEdits.set(id, layer);
+  },
+
+  endLayerEdit(id, labelKey, labelFallback) {
+    const beforeLayer = pendingLiveEdits.get(id);
+    pendingLiveEdits.delete(id);
+    if (!beforeLayer) return; // no begin captured → nothing to restore
+    const afterLayer = getLayer(get().doc.layers, id);
+    if (!afterLayer || afterLayer === beforeLayer) return; // deleted / untouched
+    if (shallowLayerEqual(beforeLayer, afterLayer)) return; // drag ended where it started
+    const entry: Omit<HistoryEntry, 'id' | 'at'> = {
+      kind: 'layer-prop',
+      labelKey,
+      labelFallback,
+      bytes: 0,
+      undo: () => set2((s) => ({ doc: { ...s.doc, layers: replaceLayer(s.doc.layers, beforeLayer) }, revision: s.revision + 1 })),
+      redo: () => set2((s) => ({ doc: { ...s.doc, layers: replaceLayer(s.doc.layers, afterLayer) }, revision: s.revision + 1 })),
+    };
     get().commitEntry(entry);
   },
 
@@ -580,6 +626,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         redo: () => set((s) => ({ doc: { ...s.doc, layers: after, selectedLayerIds: [mergedLayer.id] }, revision: bumpRevision(s.revision) })),
       };
       set((s) => ({ doc: { ...s.doc, layers: after, selectedLayerIds: [mergedLayer.id], updatedAt: Date.now() }, revision: bumpRevision(s.revision) }));
+      bumpLayerPixelVersion(mergedLayer.id); // merged content replaced in place (same layer id)
       get().commitEntry(entry);
     });
   },
@@ -673,6 +720,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       redo: () => set((s) => ({ doc: { ...s.doc, layers: replaceLayer(s.doc.layers, afterLayer) }, revision: bumpRevision(s.revision) })),
     };
     set((s) => ({ doc: { ...s.doc, layers: after, updatedAt: Date.now() }, revision: bumpRevision(s.revision) }));
+    bumpLayerPixelVersion(id); // rasterized content replaced (same layer id)
     get().commitEntry(entry);
   },
 
@@ -797,6 +845,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       },
     };
     get().commitEntry(entry);
+    bumpLayerPixelVersion(layerId); // layer pixels changed in place → refresh its thumbnail
     // The caller (filter dialog, retouch commit, …) already wrote the new
     // pixels into the layer canvas — bump the revision so the viewport
     // composite rebuilds immediately. Without this the display keeps
@@ -914,21 +963,27 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   /* ------------------------- history --------------------------- */
 
   undo() {
+    pendingLiveEdits.clear(); // a live drag must not capture a rewound state
     const s = get();
     const next = historyUndo(s.history);
     set({ history: next, revision: bumpRevision(s.revision) });
+    bumpAllLayerPixels(get().doc.layers); // undo may revert pixels/params on any layer
   },
 
   redo() {
+    pendingLiveEdits.clear();
     const s = get();
     const next = historyRedo(s.history);
     set({ history: next, revision: bumpRevision(s.revision) });
+    bumpAllLayerPixels(get().doc.layers);
   },
 
   jumpHistory(index) {
+    pendingLiveEdits.clear();
     const s = get();
     const next = jumpTo(s.history, index);
     set({ history: next, revision: bumpRevision(s.revision) });
+    bumpAllLayerPixels(get().doc.layers);
   },
 
   commitEntry(entry) {
@@ -975,6 +1030,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         redo: () => set((s) => ({ doc: after, docs: swapDoc(s.docs, after), revision: bumpRevision(s.revision) })),
       };
       set((s) => ({ doc: after, docs: swapDoc(s.docs, after), selection: null, revision: bumpRevision(s.revision) }));
+      bumpAllLayerPixels(after.layers); // layer canvases were replaced (ids persist)
       get().commitEntry(entry);
     });
   },
@@ -1002,6 +1058,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       redo: () => set((s) => ({ doc: after, docs: swapDoc(s.docs, after), revision: bumpRevision(s.revision) })),
     };
     set((s) => ({ doc: after, docs: swapDoc(s.docs, after), selection: null, revision: bumpRevision(s.revision) }));
+    bumpAllLayerPixels(after.layers); // layer content shifted (ids persist)
     get().commitEntry(entry);
   },
 
@@ -1026,6 +1083,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       redo: () => set((s) => ({ doc: after, docs: swapDoc(s.docs, after), selection: null, revision: bumpRevision(s.revision) })),
     };
     set((s) => ({ doc: after, docs: swapDoc(s.docs, after), selection: null, revision: bumpRevision(s.revision) }));
+    bumpAllLayerPixels(after.layers); // layer content cropped/shifted (ids persist)
     get().commitEntry(entry);
   },
 
@@ -1044,6 +1102,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         redo: () => set((s) => ({ doc: after, docs: swapDoc(s.docs, after), revision: bumpRevision(s.revision) })),
       };
       set((s) => ({ doc: after, docs: swapDoc(s.docs, after), revision: bumpRevision(s.revision) }));
+      bumpAllLayerPixels(after.layers); // layer canvases were replaced (ids persist)
       get().commitEntry(entry);
     });
   },
@@ -1063,6 +1122,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         redo: () => set((s) => ({ doc: after, docs: swapDoc(s.docs, after), selection: null, revision: bumpRevision(s.revision) })),
       };
       set((s) => ({ doc: after, docs: swapDoc(s.docs, after), selection: null, revision: bumpRevision(s.revision) }));
+      bumpAllLayerPixels(after.layers); // layer canvases were replaced (ids persist)
       get().commitEntry(entry);
     });
   },
@@ -1134,6 +1194,46 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Pre-drag snapshots for live slider edits (beginLayerEdit/updateLayerLive/
+ * endLayerEdit). Module-level on purpose: never rendered, never serialized.
+ */
+const pendingLiveEdits = new Map<string, Layer>();
+
+/** Patch keys that never change what a layer thumbnail renders. */
+const THUMB_INVARIANT_PATCH_KEYS = new Set([
+  'visible', 'opacity', 'blendMode', 'locked', 'expanded', 'name',
+  'clipToBelow', 'mask', 'filters', 'adjustment',
+]);
+
+function patchAffectsThumbnail(patch: Partial<Layer>): boolean {
+  for (const key of Object.keys(patch)) {
+    if (!THUMB_INVARIANT_PATCH_KEYS.has(key)) return true;
+  }
+  return false;
+}
+
+/** Shallow equality across the union of both layers' own keys. */
+function shallowLayerEqual(a: Layer, b: Layer): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (!Object.is(a[key as keyof Layer], b[key as keyof Layer])) return false;
+  }
+  return true;
+}
+
+function bumpAllLayerPixels(layers: Layer[]): void {
+  const ids: string[] = [];
+  const walk = (arr: Layer[]): void => {
+    for (const l of arr) {
+      ids.push(l.id);
+      if (l.kind === 'group') walk(l.children);
+    }
+  };
+  walk(layers);
+  bumpLayerPixelVersions(ids);
+}
 
 function swapDoc(docs: DocumentState[], doc: DocumentState): DocumentState[] {
   return docs.map((d) => (d.id === doc.id ? doc : d));

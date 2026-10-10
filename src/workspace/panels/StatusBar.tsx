@@ -4,8 +4,7 @@
  * StatusBar — zoom, document size, layer count, color depth/profile,
  * JS heap (when exposed), history position and saved state.
  *
- * v2 note: live pointer position via src/canvas/pointerBus.ts once the
- * canvas stage publishes into it.
+ * v2 note: live pointer position once the canvas stage publishes it.
  */
 
 import { useEffect, useState } from 'react';

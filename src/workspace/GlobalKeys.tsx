@@ -138,9 +138,6 @@ function runCommand(id: string, keysExpr: string): boolean {
     case 'view.actualPixels':
       store.setZoom(1);
       return true;
-    case 'view.toggleRulers':
-      store.updateSettings({ rulersVisible: !store.settings.rulersVisible });
-      return true;
     case 'view.toggleGrid':
       store.updateSettings({ gridVisible: !store.settings.gridVisible });
       return true;

@@ -316,13 +316,36 @@ function canvasToDataUrl(canvas: AnyCanvas): string {
   return host.toDataURL('image/png');
 }
 
-/** Small thumbnail for the layers panel. Cached per (layerId + revision). */
-const thumbCache = new Map<string, { rev: number; url: string }>();
+/**
+ * Per-layer content version. The store bumps it whenever a layer's rendered
+ * content may have changed (pixels, geometry, text/shape/fill params) — see
+ * bumpLayerPixelVersion() calls in editorStore. Thumbnails are cached per
+ * (layer id + version + visibility + doc size) instead of the global doc
+ * revision, so one layer's edit no longer regenerates every thumbnail.
+ */
+const pixelVersions = new Map<string, number>();
+
+export function bumpLayerPixelVersion(layerId: string): void {
+  pixelVersions.set(layerId, (pixelVersions.get(layerId) ?? 0) + 1);
+}
+
+export function bumpLayerPixelVersions(layerIds: Iterable<string>): void {
+  for (const id of layerIds) bumpLayerPixelVersion(id);
+}
+
+/** Small thumbnail for the layers panel. Cached per layer identity, not per global revision.
+ *  `revision` is kept in the signature for API compatibility; cache validity is per layer. */
+const thumbCache = new Map<string, { sig: string; url: string }>();
+
+function layerThumbSignature(layer: Layer, doc: DocumentState): string {
+  return `${layer.id}|${pixelVersions.get(layer.id) ?? 0}|${layer.visible ? 1 : 0}|${doc.width}x${doc.height}`;
+}
 
 export function layerThumbnail(layer: Layer, doc: DocumentState, revision: number, size = 44): string {
-  const key = layer.id;
-  const cached = thumbCache.get(key);
-  if (cached && cached.rev === revision) return cached.url;
+  void revision;
+  const sig = layerThumbSignature(layer, doc);
+  const cached = thumbCache.get(layer.id);
+  if (cached && cached.sig === sig) return cached.url;
   const isolated = renderLayerIsolated(layer, doc);
   const c = makeCanvas(size, size);
   const ctx = ctx2d(c);
@@ -336,7 +359,7 @@ export function layerThumbnail(layer: Layer, doc: DocumentState, revision: numbe
   } catch {
     url = '';
   }
-  thumbCache.set(key, { rev: revision, url });
+  thumbCache.set(layer.id, { sig, url });
   if (thumbCache.size > 400) {
     // simple eviction to bound memory
     const first = thumbCache.keys().next().value;
@@ -345,12 +368,14 @@ export function layerThumbnail(layer: Layer, doc: DocumentState, revision: numbe
   return url;
 }
 
-/** Mask thumbnail (grayscale) for the layers panel. */
+/** Mask thumbnail (grayscale) for the layers panel. Cached per mask-canvas identity. */
+const maskThumbCache = new Map<string, { ref: AnyCanvas; url: string }>();
+
 export function maskThumbnail(layer: Layer, revision: number, size = 44): string | null {
+  void revision;
   if (!layer.mask) return null;
-  const key = `${layer.id}_mask`;
-  const cached = thumbCache.get(key);
-  if (cached && cached.rev === revision) return cached.url;
+  const cached = maskThumbCache.get(layer.id);
+  if (cached && cached.ref === layer.mask.canvas) return cached.url;
   const c = makeCanvas(size, size);
   const ctx = ctx2d(c);
   const m = layer.mask.canvas;
@@ -364,8 +389,28 @@ export function maskThumbnail(layer: Layer, revision: number, size = 44): string
   } catch {
     url = '';
   }
-  thumbCache.set(key, { rev: revision, url });
+  maskThumbCache.set(layer.id, { ref: layer.mask.canvas, url });
   return url;
+}
+
+/* ------------------------------------------------------------------ */
+/* shared composite (viewport + navigator preview)                     */
+/* ------------------------------------------------------------------ */
+
+let sharedComposite: { doc: DocumentState; canvas: AnyCanvas } | null = null;
+
+/** Publishes the viewport's cached composite so cheap consumers (navigator
+ *  preview) can reuse it instead of recomposing the whole document. */
+export function publishSharedComposite(doc: DocumentState, canvas: AnyCanvas): void {
+  sharedComposite = { doc, canvas };
+}
+
+/** Returns the shared composite for `doc` when fresh, otherwise composes it. */
+export function getSharedComposite(doc: DocumentState): AnyCanvas {
+  if (sharedComposite && sharedComposite.doc === doc) return sharedComposite.canvas;
+  const canvas = composeDocument(doc);
+  sharedComposite = { doc, canvas };
+  return canvas;
 }
 
 // keep worker message type referenced so ts sees it used in this module family

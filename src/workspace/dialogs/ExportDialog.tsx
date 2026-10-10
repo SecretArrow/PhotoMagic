@@ -1,11 +1,11 @@
 'use client';
 
 /**
- * ExportDialog — image export (png/jpeg/webp with quality/scale/transparency)
+ * ExportDialog — image export (png/jpeg/webp/avif with quality/scale/transparency)
  * and native project export (.pfs).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useEditorStore } from '../../state/editorStore';
 import { APP_VERSION } from '../../engine/document';
 import { exportComposite, downloadBlob, safeFilename, type ExportFormat } from '../../formats/api';
@@ -29,6 +29,32 @@ import type { WorkspaceDialogProps } from './NewDocumentDialog';
 
 type UiExportFormat = ExportFormat | 'psd';
 
+/* AVIF feature detection (cached per session): browsers without an AVIF
+ * encoder either resolve null or silently fall back to PNG — both count as
+ * "unsupported" so the dialog can hide the option honestly. */
+let avifSupportPromise: Promise<boolean> | null = null;
+function detectAvifSupport(): Promise<boolean> {
+  if (!avifSupportPromise) {
+    avifSupportPromise = new Promise<boolean>((resolve) => {
+      try {
+        if (typeof document === 'undefined') {
+          resolve(false);
+          return;
+        }
+        const probe = document.createElement('canvas');
+        probe.width = 1;
+        probe.height = 1;
+        probe.toBlob((blob) => resolve(!!blob && blob.type === 'image/avif'), 'image/avif');
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+  return avifSupportPromise;
+}
+
+const SCALE_PRESETS = [25, 50, 100, 200];
+
 export default function ExportDialog({ open, onOpenChange }: WorkspaceDialogProps) {
   const { t } = useI18n();
   const doc = useEditorStore((s) => s.doc);
@@ -38,6 +64,24 @@ export default function ExportDialog({ open, onOpenChange }: WorkspaceDialogProp
   const [scale, setScale] = useState(1);
   const [transparent, setTransparent] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [avifSupported, setAvifSupported] = useState<boolean | null>(null);
+
+  /* async AVIF support probe — runs once per session on first dialog open */
+  useEffect(() => {
+    if (!open || avifSupported !== null) return;
+    let cancelled = false;
+    void detectAvifSupport().then((ok) => {
+      if (!cancelled) setAvifSupported(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, avifSupported]);
+
+  /* if AVIF turned out to be unsupported while selected, fall back honestly */
+  useEffect(() => {
+    if (avifSupported === false && format === 'avif') setFormat('png');
+  }, [avifSupported, format]);
 
   const outW = Math.max(1, Math.round(doc.width * scale));
   const outH = Math.max(1, Math.round(doc.height * scale));
@@ -104,17 +148,44 @@ export default function ExportDialog({ open, onOpenChange }: WorkspaceDialogProp
                 { value: 'png', label: 'PNG' },
                 { value: 'jpeg', label: 'JPEG' },
                 { value: 'webp', label: 'WebP' },
+                ...(avifSupported ? [{ value: 'avif', label: 'AVIF' }] : []),
                 { value: 'psd', label: 'PSD' },
               ]}
             />
             {format === 'psd' ? (
               <p className="text-[10px] leading-relaxed text-muted-foreground/80">{t('export.psdNote')}</p>
             ) : null}
+            {format === 'avif' ? (
+              <p className="text-[10px] leading-relaxed text-muted-foreground/80">{t('export.avifNote')}</p>
+            ) : null}
             {format !== 'png' && format !== 'psd' ? (
               <SliderRow label={t('dialog.export.quality')} value={quality} min={1} max={100} onValueChange={setQuality} />
             ) : null}
             {format !== 'psd' ? (
               <SliderRow label={t('dialog.export.scale')} value={Math.round(scale * 100)} min={10} max={400} onValueChange={(v) => setScale(v / 100)} />
+            ) : null}
+            {format !== 'psd' ? (
+              <div className="flex items-center gap-1" role="group" aria-label={t('dialog.export.scale')}>
+                {SCALE_PRESETS.map((pct) => {
+                  const active = Math.round(scale * 100) === pct;
+                  return (
+                    <button
+                      key={pct}
+                      type="button"
+                      aria-pressed={active}
+                      aria-label={`${pct}%`}
+                      onClick={() => setScale(pct / 100)}
+                      className={`h-5 flex-1 cursor-pointer rounded border text-[10px] leading-none ${
+                        active
+                          ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
+                          : 'border-border text-muted-foreground hover:bg-accent'
+                      }`}
+                    >
+                      {pct}%
+                    </button>
+                  );
+                })}
+              </div>
             ) : null}
             {format === 'jpeg' ? (
               <SwitchRow label={t('dialog.export.transparent')} checked={false} onCheckedChange={() => undefined} className="opacity-50" />

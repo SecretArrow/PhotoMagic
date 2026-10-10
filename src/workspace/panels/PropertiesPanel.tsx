@@ -146,6 +146,16 @@ function TextProperties({ layer }: { layer: TextLayer }) {
     updateLayer(layer.id, { text: { ...layer.text, ...patch } }, 'history.textEdit', 'Edit text');
   };
 
+  /** Live (no-history) text patch; pass the same label pair to commitLive. */
+  const livePatchText = (patch: Partial<TextContent>) => {
+    const store = useEditorStore.getState();
+    store.beginLayerEdit(layer.id);
+    store.updateLayerLive(layer.id, { text: { ...layer.text, ...patch } });
+  };
+  const commitLive = () => {
+    useEditorStore.getState().endLayerEdit(layer.id, 'history.textEdit', 'Edit text');
+  };
+
   return (
     <>
       <Textarea
@@ -162,9 +172,21 @@ function TextProperties({ layer }: { layer: TextLayer }) {
         onValueChange={(v) => patchText({ fontFamily: v })}
         items={FONT_LIST}
       />
-      <SliderRow label={t('options.fontSize')} value={layer.text.fontSize} min={4} max={400} onValueChange={(v) => patchText({ fontSize: v })} />
+      <SliderRow
+        label={t('options.fontSize')}
+        value={layer.text.fontSize}
+        min={4}
+        max={400}
+        onValueChange={(v) => livePatchText({ fontSize: v })}
+        onValueCommit={() => commitLive()}
+      />
       <div className="flex items-center gap-2">
-        <ColorPickerButton label={t('options.color')} color={layer.text.color} onChange={(hex) => patchText({ color: hex })} />
+        <ColorPickerButton
+          label={t('options.color')}
+          color={layer.text.color}
+          onChange={(hex) => livePatchText({ color: hex })}
+          onCommit={commitLive}
+        />
         <span className="text-[11px] text-muted-foreground">{t('options.color')}</span>
       </div>
     </>
@@ -173,8 +195,15 @@ function TextProperties({ layer }: { layer: TextLayer }) {
 
 function ShapeProperties({ layer }: { layer: ShapeLayer }) {
   const { t } = useI18n();
-  const updateLayer = useEditorStore((s) => s.updateLayer);
-  const patch = (p: Partial<ShapeLayer>) => updateLayer(layer.id, p as Partial<Layer>, 'options.shapeFill', 'Shape properties');
+  /** Live (no-history) shape patch; history is pushed once on commit. */
+  const livePatch = (p: Partial<ShapeLayer>) => {
+    const store = useEditorStore.getState();
+    store.beginLayerEdit(layer.id);
+    store.updateLayerLive(layer.id, p as Partial<Layer>);
+  };
+  const commitLive = () => {
+    useEditorStore.getState().endLayerEdit(layer.id, 'options.shapeFill', 'Shape properties');
+  };
   return (
     <>
       <div className="flex items-center gap-2">
@@ -182,7 +211,8 @@ function ShapeProperties({ layer }: { layer: ShapeLayer }) {
           <ColorPickerButton
             label={t('options.shapeFill')}
             color={layer.fill.color}
-            onChange={(hex) => patch({ fill: { ...layer.fill, color: hex } as ShapeLayer['fill'] })}
+            onChange={(hex) => livePatch({ fill: { ...layer.fill, color: hex } as ShapeLayer['fill'] })}
+            onCommit={commitLive}
           />
         ) : null}
         <span className="text-[11px] text-muted-foreground">{t('options.shapeFill')}</span>
@@ -193,7 +223,8 @@ function ShapeProperties({ layer }: { layer: ShapeLayer }) {
             <ColorPickerButton
               label={t('options.shapeStroke')}
               color={layer.stroke.color}
-              onChange={(hex) => patch({ stroke: { ...layer.stroke, color: hex } as ShapeLayer['stroke'] })}
+              onChange={(hex) => livePatch({ stroke: { ...layer.stroke, color: hex } as ShapeLayer['stroke'] })}
+              onCommit={commitLive}
             />
             <span className="text-[11px] text-muted-foreground">{t('options.shapeStroke')}</span>
           </div>
@@ -203,7 +234,8 @@ function ShapeProperties({ layer }: { layer: ShapeLayer }) {
             min={0.5}
             max={100}
             step={0.5}
-            onValueChange={(v) => patch({ stroke: { ...layer.stroke, width: v } as ShapeLayer['stroke'] })}
+            onValueChange={(v) => livePatch({ stroke: { ...layer.stroke, width: v } as ShapeLayer['stroke'] })}
+            onValueCommit={() => commitLive()}
           />
         </>
       ) : null}
@@ -213,13 +245,20 @@ function ShapeProperties({ layer }: { layer: ShapeLayer }) {
 
 function AdjustmentProperties({ layer }: { layer: AdjustmentLayer }) {
   const { t } = useI18n();
-  const updateLayer = useEditorStore((s) => s.updateLayer);
   return (
     <>
       <InfoRow label={t('image.adjustments')} value={t(adjustmentLabelKey(layer.adjustment.type))} />
       <AdjustmentParamsEditor
         spec={layer.adjustment}
-        onChange={(spec) => updateLayer(layer.id, { adjustment: spec } as Partial<Layer>, 'panel.adjustments', 'Adjustment')}
+        onChange={(spec) => {
+          // live update while dragging — history is pushed once on commit
+          const store = useEditorStore.getState();
+          store.beginLayerEdit(layer.id);
+          store.updateLayerLive(layer.id, { adjustment: spec } as Partial<Layer>);
+        }}
+        onCommit={() => {
+          useEditorStore.getState().endLayerEdit(layer.id, 'panel.adjustments', 'Adjustment');
+        }}
       />
     </>
   );
@@ -227,7 +266,6 @@ function AdjustmentProperties({ layer }: { layer: AdjustmentLayer }) {
 
 function FillProperties({ layer }: { layer: FillLayer }) {
   const { t } = useI18n();
-  const updateLayer = useEditorStore((s) => s.updateLayer);
   return (
     <div className="flex items-center gap-2">
       {layer.paint.type === 'solid' ? (
@@ -235,7 +273,15 @@ function FillProperties({ layer }: { layer: FillLayer }) {
           <ColorPickerButton
             label={t('options.color')}
             color={layer.paint.color}
-            onChange={(hex) => updateLayer(layer.id, { paint: { ...layer.paint, color: hex } } as Partial<Layer>, 'options.color', 'Fill color')}
+            onChange={(hex) => {
+              // live update while picking — history is pushed once on close
+              const store = useEditorStore.getState();
+              store.beginLayerEdit(layer.id);
+              store.updateLayerLive(layer.id, { paint: { ...layer.paint, color: hex } } as Partial<Layer>);
+            }}
+            onCommit={() => {
+              useEditorStore.getState().endLayerEdit(layer.id, 'options.color', 'Fill color');
+            }}
           />
           <span className="text-[11px] text-muted-foreground">{t('options.color')}</span>
         </>

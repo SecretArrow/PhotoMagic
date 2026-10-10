@@ -61,7 +61,6 @@ export default function MenuBar({ openNumericPrompt }: MenuBarProps) {
   const { t } = useI18n();
   const mac = useMemo(() => isMacPlatform(), []);
   const filters = useMemo(() => listFilters(), []);
-  const rulersVisible = useEditorStore((s) => s.settings.rulersVisible);
   const gridVisible = useEditorStore((s) => s.settings.gridVisible);
   const beforeAfter = useEditorStore((s) => s.ui.beforeAfter);
   const hasSelection = useEditorStore((s) => s.selection !== null);
@@ -341,16 +340,6 @@ export default function MenuBar({ openNumericPrompt }: MenuBarProps) {
             {withShortcut('view.actualPixels')}
           </MenubarItem>
           <MenubarSeparator />
-          <MenubarCheckboxItem
-            checked={rulersVisible}
-            onSelect={(e) => {
-              e.preventDefault();
-              getState().updateSettings({ rulersVisible: !getState().settings.rulersVisible });
-            }}
-          >
-            {t('view.toggleRulers')}
-            {withShortcut('view.toggleRulers')}
-          </MenubarCheckboxItem>
           <MenubarCheckboxItem
             checked={gridVisible}
             onSelect={(e) => {

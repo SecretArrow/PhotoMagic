@@ -90,7 +90,6 @@ export const SHORTCUT_TABLE: ShortcutDef[] = [
   { id: 'view.zoomOut', labelKey: 'view.zoomOut', keys: 'mod+-', scope: 'view' },
   { id: 'view.fitScreen', labelKey: 'view.fitScreen', keys: 'mod+0', scope: 'view' },
   { id: 'view.actualPixels', labelKey: 'view.actualPixels', keys: 'mod+1', scope: 'view' },
-  { id: 'view.toggleRulers', labelKey: 'view.toggleRulers', keys: 'mod+r', scope: 'view' },
   { id: 'view.toggleGrid', labelKey: 'view.toggleGrid', keys: "mod+'", scope: 'view' },
   { id: 'view.togglePanels', labelKey: 'view.togglePanels', keys: 'tab', scope: 'view' },
   { id: 'color.swap', labelKey: 'color.swap', keys: 'x', scope: 'global' },
