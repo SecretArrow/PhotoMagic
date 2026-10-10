@@ -4,7 +4,7 @@
  * ImageSizeDialog — resample the whole document (all layers).
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useEditorStore } from '../../state/editorStore';
 import { useI18n } from '../../i18n';
 import { Button } from '@/components/ui/button';
@@ -29,15 +29,18 @@ export default function ImageSizeDialog({ open, onOpenChange }: WorkspaceDialogP
   const [smooth, setSmooth] = useState(true);
   const [touched, setTouched] = useState(false);
 
-  // re-sync when opened against a different document or re-opened
-  useEffect(() => {
+  // Re-sync when opened against a different document or re-opened —
+  // render-phase state adjustment (react.dev "You Might Not Need an Effect"),
+  // replacing the old setState-in-effect sync without cascading renders.
+  const [syncToken, setSyncToken] = useState(() => `${doc.id}|${open}`);
+  if (syncToken !== `${doc.id}|${open}`) {
+    setSyncToken(`${doc.id}|${open}`);
     if (open) {
       setWidth(doc.width);
       setHeight(doc.height);
       setTouched(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, doc.id]);
+  }
 
   const setW = (v: number) => {
     setTouched(true);

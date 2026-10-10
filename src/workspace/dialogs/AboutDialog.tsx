@@ -28,7 +28,7 @@ export default function AboutDialog({ open, onOpenChange }: WorkspaceDialogProps
           <DialogDescription className="sr-only">{t('dialog.about.title')}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col items-center gap-3 py-2 text-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+          { }
           <img src="/icons/icon.svg" alt="" width={64} height={64} className="rounded-xl" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('app.name')}</p>

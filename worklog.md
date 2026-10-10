@@ -543,3 +543,22 @@ Stage Summary:
 - v1.6: layout 3-tier purpose-built — PC (desktop shell penuh), tablet (drawer samping 420px), phone portrait (bottom sheet 45vh), phone landscape kecil (drawer 360px + top bar kompak); hardening platform: keyboard Android resizes-content, dark form controls iOS/Android, fallback dvh iOS<15.4, tap-highlight/touch-action, guard dialog layar pendek, reduced-motion, safe-area 4 sisi (top/bottom/left/right) di top bar/dock/OptionsBar/zoom stack
 - Gates: tsc 0; vitest 174/174 (14 file); eslint 0 error (14 warning lama); i18n 458=458 (0 kunci baru); E2E 11 viewport + rotasi + smoke lolos
 - Catatan jujur: iPad/tablet landscape ≥1024 tetap masuk desktop shell (desain width-based pra-ada, cocok untuk layar besar); rotasi lintas batas 1024 menutup sheet mobile (shell swap, tanpa crash, state persist)
+
+---
+Task ID: 22
+Agent: main (Super Z)
+Task: v1.6.1 — "periksa keseluruhan, auto fix": QA menyeluruh statik + build + E2E interaktif semua tier, perbaiki semua temuan
+
+Work Log:
+- Statik: tsc 0; vitest 174/174; eslint awal 0 error/14 warning → `eslint src --fix` menghapus 7 direktif disable usang dan MEMBUKA 3 error nyata react-hooks/set-state-in-effect (CanvasSizeDialog:32, ImageSizeDialog:35, HsvPicker:104 — pola sync state-lokal-dari-store di useEffect yang selama ini disupresi)
+- FIX #1 (3 file): refactor ke render-phase state adjustment (pola resmi react.dev "You Might Not Need an Effect") — syncToken `{doc.id}|{open}` untuk kedua dialog, lastExternal `value` untuk HsvPicker; perilaku identik (resync saat open/doc berganti; hexText selalu ikut value eksternal), tanpa cascading renders; import useEffect tak terpakai dibersihkan
+- FIX #2: 7 warning no-unused-expressions di engine — paint.ts ternary-as-statement (roundRect fallback + moveTo/lineTo polygon & star) → if/else; selections/index.ts flood-fill comma-operator 4 baris → blok {}
+- Build produksi: `bun run build` lolos (3/3 halaman statis, 0 error)
+- E2E interaktif (scripts/e2e-v161-qa.sh + e2e-v161-retest.sh, satu sesi bash per run): DESKTOP — paint→history 1:0, Ctrl+Z→1:-1 (regresi v1.5 utuh), redo, marquee→selection ada, 9 dialog semuanya render (export/new/image-size/canvas-size/settings/storage/about/shortcuts/filter-gallery — dua dialog hasil refactor FIX #1 termasuk), i18n switch en→id 'Berkas' OK→kembali en, zoom fit 309%→103%; TABLET — 6 tab panel semuanya render (Layers/History/Adjustments/Color/Histogram/Properties), paint + tombol Undo 1:0→1:-1; PHONE PORTRAIT — paint OK, bottom sheet top=464/844 (benar bawah), dialog Export… via tombol Download OK; PHONE LANDSCAPE — drawer kanan 420×full, paint OK (canvas 844×249); PWA manifest+icons 200; window errors KOSONG di semua tier
+- Investigasi 3 anomali → semuanya artefak probe (bukan bug): (a) CAF menu — Radix MenubarTrigger butuh pointerdown asli, programmatic .click() tak membuka menu; [role=menuitem] juga match trigger; klik ref asli via snapshot → menu Edit lengkap 10 item, 'Content-aware fill…' ADA, status DISABLED tanpa seleksi (benar; Task 20 buktikan ENABLED dengan seleksi); (b) phone export — label sebenarnya 'Export…' (ellips char), probe match exact 'Export'; (c) landscape paint gagal di sweep pertama = timing, retest 1:0 OK
+- FIX #3 (a11y nyata): tombol dock LayoutGrid & tombol ⋯ top bar sama-sama aria-label 'More' (2 tombol, konfus screen reader) → kunci i18n baru 'mobile.allTools' (en 'All tools' / id 'Semua alat', 459=459), dock memakai label baru; verifikasi E2E: label unik, tools grid sheet terbuka 26 tombol
+- Artefak: scripts/e2e-v161-qa.sh, scripts/e2e-v161-retest.sh, screenshot download/e2e-v161/ + download/e2e-v16/
+
+Stage Summary:
+- v1.6.1: eslint kini 0 error 0 warning (dari 0/14), tsc 0, vitest 174/174, i18n 459=459, build produksi lolos, E2E semua tier + 9 dialog + i18n switch + PWA lolos dengan 0 page error; 3 perbaikan: render-phase adjust (3 komponen, pola React modern), pembersihan 7 pola ekspresi engine, label a11y 'All tools'
+- Temuan jujur: tidak ada regresi fungsional dari v1.6; seluruh anomali E2E adalah keterbatasan probe (programmatic click vs pointerdown Radix, exact-match label, timing); fix bersifat kualitas kode/a11y

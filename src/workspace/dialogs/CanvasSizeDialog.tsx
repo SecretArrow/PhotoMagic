@@ -4,7 +4,7 @@
  * CanvasSizeDialog — changes the canvas bounds without resampling layers.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useEditorStore } from '../../state/editorStore';
 import { useI18n } from '../../i18n';
 import { Button } from '@/components/ui/button';
@@ -27,13 +27,17 @@ export default function CanvasSizeDialog({ open, onOpenChange }: WorkspaceDialog
   const [height, setHeight] = useState(doc.height);
   const [anchor, setAnchor] = useState<'center' | 'topleft'>('center');
 
-  useEffect(() => {
+  // Re-sync the fields when the dialog opens against a (new) document —
+  // render-phase state adjustment (react.dev "You Might Not Need an Effect"),
+  // which replaces the old setState-in-effect sync without cascading renders.
+  const [syncToken, setSyncToken] = useState(() => `${doc.id}|${open}`);
+  if (syncToken !== `${doc.id}|${open}`) {
+    setSyncToken(`${doc.id}|${open}`);
     if (open) {
       setWidth(doc.width);
       setHeight(doc.height);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, doc.id]);
+  }
 
   const apply = () => {
     const w = Math.max(1, Math.min(16384, Math.round(width)));

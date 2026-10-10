@@ -235,7 +235,7 @@ export default function MobileWorkspace() {
           variant="ghost"
           size="icon"
           className="ml-1 h-11 w-11 shrink-0"
-          aria-label={t('mobile.more')}
+          aria-label={t('mobile.allTools')}
           onClick={() => setMobileToolbarSheet(true)}
         >
           <LayoutGrid className="size-4" />

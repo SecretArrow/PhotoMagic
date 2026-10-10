@@ -54,7 +54,11 @@ export function buildShapePath(g: ShapeGeometry): Path2D {
         const r = Math.min(g.radius, Math.abs(g.w) / 2, Math.abs(g.h) / 2);
         const x = Math.min(g.x, g.x + g.w);
         const y = Math.min(g.y, g.y + g.h);
-        p.roundRect ? p.roundRect(x, y, Math.abs(g.w), Math.abs(g.h), r) : manualRoundRect(p, x, y, Math.abs(g.w), Math.abs(g.h), r);
+        if (p.roundRect) {
+          p.roundRect(x, y, Math.abs(g.w), Math.abs(g.h), r);
+        } else {
+          manualRoundRect(p, x, y, Math.abs(g.w), Math.abs(g.h), r);
+        }
       } else {
         p.rect(Math.min(g.x, g.x + g.w), Math.min(g.y, g.y + g.h), Math.abs(g.w), Math.abs(g.h));
       }
@@ -74,7 +78,11 @@ export function buildShapePath(g: ShapeGeometry): Path2D {
         const a = g.rotation + (i / Math.max(3, g.sides)) * Math.PI * 2 - Math.PI / 2;
         const px = g.cx + Math.cos(a) * g.radius;
         const py = g.cy + Math.sin(a) * g.radius;
-        i === 0 ? p.moveTo(px, py) : p.lineTo(px, py);
+        if (i === 0) {
+          p.moveTo(px, py);
+        } else {
+          p.lineTo(px, py);
+        }
       }
       p.closePath();
       break;
@@ -86,7 +94,11 @@ export function buildShapePath(g: ShapeGeometry): Path2D {
         const a = g.rotation + (i / (n * 2)) * Math.PI * 2 - Math.PI / 2;
         const px = g.cx + Math.cos(a) * rad;
         const py = g.cy + Math.sin(a) * rad;
-        i === 0 ? p.moveTo(px, py) : p.lineTo(px, py);
+        if (i === 0) {
+          p.moveTo(px, py);
+        } else {
+          p.lineTo(px, py);
+        }
       }
       p.closePath();
       break;

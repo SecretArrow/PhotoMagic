@@ -104,7 +104,7 @@ function TopBar() {
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[#2c2d33] bg-[#1b1c20] px-3">
       {/* app identity */}
       <div className="flex min-w-0 items-center gap-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
+        { }
         <img src="/icons/icon.svg" alt="" width={22} height={22} className="rounded-md" />
         <span className="hidden text-xs font-semibold text-foreground lg:inline">{t('app.name')}</span>
       </div>

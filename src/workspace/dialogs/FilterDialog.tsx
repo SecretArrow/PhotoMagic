@@ -69,7 +69,7 @@ export default function FilterDialog({ open, onOpenChange }: WorkspaceDialogProp
   /* new filter selection → default params */
   useEffect(() => {
     if (open && def) setParams(defaultsFor(def));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open, filterOp]);
 
   const buildPreviewSource = useCallback(() => {

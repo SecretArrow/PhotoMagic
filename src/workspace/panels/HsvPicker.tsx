@@ -97,15 +97,18 @@ export function HsvPicker({ value, onChange, onCommit }: HsvPickerProps) {
     [],
   );
 
-  // sync when the color changes externally (eyedropper, swatches, swap)
-  useEffect(() => {
+  // sync when the color changes externally (eyedropper, swatches, swap) —
+  // render-phase state adjustment (react.dev "You Might Not Need an Effect"),
+  // replacing the old setState-in-effect sync without cascading renders.
+  const [lastExternal, setLastExternal] = useState(value);
+  if (lastExternal !== value) {
+    setLastExternal(value);
     if (hsvToHex(hsv) !== value.toLowerCase()) {
       const parsed = hexToHsv(value);
       if (parsed) setHsv(parsed);
     }
     setHexText(value);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }
 
   const commitHsv = (next: Hsv) => {
     setHsv(next);

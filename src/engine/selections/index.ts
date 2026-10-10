@@ -161,10 +161,22 @@ export function floodSelect(
       mask[idx] = 255;
       const x = idx % width;
       const y = (idx / width) | 0;
-      if (x > 0 && !seen[idx - 1]) (seen[idx - 1] = 1), stack.push(idx - 1);
-      if (x < width - 1 && !seen[idx + 1]) (seen[idx + 1] = 1), stack.push(idx + 1);
-      if (y > 0 && !seen[idx - width]) (seen[idx - width] = 1), stack.push(idx - width);
-      if (y < height - 1 && !seen[idx + width]) (seen[idx + width] = 1), stack.push(idx + width);
+      if (x > 0 && !seen[idx - 1]) {
+        seen[idx - 1] = 1;
+        stack.push(idx - 1);
+      }
+      if (x < width - 1 && !seen[idx + 1]) {
+        seen[idx + 1] = 1;
+        stack.push(idx + 1);
+      }
+      if (y > 0 && !seen[idx - width]) {
+        seen[idx - width] = 1;
+        stack.push(idx - width);
+      }
+      if (y < height - 1 && !seen[idx + width]) {
+        seen[idx + width] = 1;
+        stack.push(idx + width);
+      }
     }
   } else {
     for (let i = 0; i < width * height; i++) {

@@ -125,7 +125,7 @@ function Workspace() {
 
     return () => manager.stop();
     // t() is stable per language; language changes don't require a restart
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [autosaveEnabled, autosaveIntervalSec]);
 
   const acceptRecovery = async () => {
