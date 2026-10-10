@@ -1020,6 +1020,21 @@ export default function CanvasStage() {
 
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Alt') altRef.current = true;
+      // Forward commit/cancel keys to the active tool (crop Apply/Escape,
+      // pen path close, lasso cancel). Skips editable targets and cases where
+      // a shortcut handler already consumed the event.
+      if ((e.key === 'Enter' || e.key === 'Escape') && !e.defaultPrevented) {
+        const t = e.target as HTMLElement | null;
+        const editable =
+          !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+        if (!editable) {
+          const controller = getToolController(useEditorStore.getState().tool);
+          if (controller?.onKeyDown && controller.onKeyDown(e.key, toolContext())) {
+            e.preventDefault();
+            return;
+          }
+        }
+      }
       if (e.key === ' ' && hoveringRef.current && !e.repeat && !spaceRef.current) {
         spaceRef.current = true;
         e.preventDefault();

@@ -451,3 +451,28 @@ Work Log:
 Stage Summary:
 - v1.4 verified & shipped: PSD layer groups (import+export, luni, lsct dividers), content-aware fill (RGBA diffusion, worker, honest UX), WebGPU memory-safety hardening (diagnostics, destroy paths, limits guard, fallback), history-trim bug fix + regression tests, recent colors + hex copy + About "under the hood", docs updated
 - Gates: tsc 0; vitest 166/166 (13 files); eslint 0 errors (7 pre-existing warnings); i18n 456=456
+
+---
+Task ID: 20
+Agent: main (Super Z) (QA sweep agent timed out early with no changes; orchestrator ran the full sweep)
+Task: Auto-test every toolbox tool + features E2E; auto-fix all errors found; polish crop UX
+
+Work Log:
+- Crop UX (user request): explicit Apply/Cancel buttons in OptionsBar crop section; crop.ts exports commitCrop/cancelCrop/isCropRectActive/onCropRectChange (listener registry notified on every rect lifecycle change); buttons live-enable when a rect exists; i18n options.cropApply/cropCancel en+id; verified E2E (disabled → drag → enabled → Apply crops 1280×800→266×177)
+- E2E sweep (agent-browser, ~50 interactions):
+  - Paint (12): brush/pencil/airbrush/smudge/blur/sharpen/dodge/burn/clone(alt-click)/bucket/gradient/eraser — ALL PASS (history + pixel deltas)
+  - Selections (12): rect/ellipse/lasso/poly-lasso/wand + All/Inverse/Feather/Grow/Contract/Border/Deselect — ALL PASS (CAF-enabled proxy + no errors)
+  - Vector: text (layer created) ✓, shape rect ✓, move ✓; PEN FAILED → BUG #1
+  - View: zoom tool ✓, zoom in/out ✓, fit ✓, 100% ✓, hand pan ✓
+  - Layers (9): new raster/text/fill, duplicate, merge down, flatten, rasterize, delete, group — ALL PASS
+  - Adjustments: Invert Apply ✓ (correctly disabled for group/locked layers — good UX, unlock flow verified); Filter AI Remove Background ✓; Gaussian blur re-checked ✓
+  - Export dialog: chips 25/50/100/200% ✓, Project .pfs tab ✓; Shortcuts + About dialogs ✓ (renderer + no-WASM info present)
+- BUG #1 (dead code): ToolController.onKeyDown (crop Enter/Escape, pen Enter, lasso Escape) was NEVER called — CanvasStage window keydown only handled Alt/Space. FIX: forward Enter/Escape to active tool (skip editable targets). Verified: pen 4 anchors + Enter → Path layer committed; crop draw + Enter → doc cropped
+- BUG #2 (MAJOR): matchesShortcut ignored EXTRA event modifiers → Ctrl+Z matched the plain 'z' zoom-tool shortcut FIRST and returned — keyboard undo/redo (and any ctrl/shift/alt+letter colliding with a tool key: b/p/e/g/t/z/…) were dead. FIX: exact modifier matching in matchesShortcut (wantCtrl/meta/shift/alt equality; 'mod' normalizes per platform) + tests/unit/shortcuts.test.ts (8 regression tests). Verified: Ctrl+Z 1/1→0/1, Ctrl+Shift+Z→1/1; Ctrl+A/Ctrl+J/Ctrl+D/Ctrl+0 sanity pass
+- Eyedropper ✓ (picks pixel color, hex updates, recent-colors row appears after debounce); brush [ ] size keys ✓ (24→26→24)
+- Harness notes: HMR staleness requires full dev restarts; stale HTTP cache in long-lived browser session served old chunks — fresh isolated session needed; display-canvas alpha probes always 255
+
+Stage Summary:
+- v1.5: crop Apply/Cancel buttons + key forwarding (crop/pen/lasso keyboard flows restored) + exact-modifier shortcut matching (keyboard undo/redo/etc. restored) + 8 shortcut regression tests
+- Sweep result: ~50/50 items pass after fixes; 3 real bugs found & fixed; 0 BLOCKED
+- Gates: tsc 0; vitest 174/174 (14 files); eslint 0 errors; i18n 458=458

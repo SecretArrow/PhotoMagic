@@ -122,6 +122,18 @@ export function matchesShortcut(parsed: ParsedKey, expr: string, isMac: boolean)
   const parts = expr.toLowerCase().split('+');
   const key = parts[parts.length - 1];
   const mods = parts.slice(0, -1);
+  // EXACT modifier matching: an event carrying modifiers the expression does
+  // not ask for must NOT match (otherwise Ctrl+Z would also hit the plain
+  // 'z' tool shortcut and undo would never fire). 'mod' normalizes to Cmd on
+  // Mac and Ctrl elsewhere.
+  const wantCtrl = mods.includes('ctrl') || (!isMac && mods.includes('mod'));
+  const wantMeta = mods.includes('cmd') || (isMac && mods.includes('mod'));
+  const wantShift = mods.includes('shift');
+  const wantAlt = mods.includes('alt');
+  if (parsed.ctrl !== wantCtrl) return false;
+  if (parsed.meta !== wantMeta) return false;
+  if (parsed.shift !== wantShift) return false;
+  if (parsed.alt !== wantAlt) return false;
   for (const mod of mods) {
     switch (mod) {
       case 'mod':
