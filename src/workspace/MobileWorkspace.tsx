@@ -1,9 +1,12 @@
 'use client';
 
 /**
- * MobileWorkspace — compact shell below 1024px: slim top bar, canvas,
- * floating zoom controls, scrollable tool dock, slide-up panel sheet and a
- * full tools grid sheet. Panel components are shared with the desktop shell.
+ * MobileWorkspace — compact shell below 1024px (tablet + phone tiers): slim
+ * top bar, canvas, floating zoom controls, scrollable tool dock, panel sheet
+ * and a full tools grid sheet. Panel components are shared with the desktop
+ * shell. Tablets and landscape phones get a right-side drawer for panels;
+ * portrait phones keep the bottom sheet. Safe-area insets (top/bottom/left/
+ * right) are applied unconditionally — they resolve to 0px off-notch.
  */
 
 import { useRef, type ChangeEvent } from 'react';
@@ -14,6 +17,7 @@ import { useI18n } from '../i18n';
 import type { TranslationKey } from '../i18n/dictionaries';
 import { dispatchFit, handleOpenFiles } from './commands';
 import { MOBILE_TOOL_ORDER, TOOL_ORDER, toolIcon, toolLabelKey } from './toolMeta';
+import { useOrientation, useViewportTier } from './useViewportTier';
 import OptionsBar from './panels/OptionsBar';
 import LayersPanel from './panels/LayersPanel';
 import HistoryPanel from './panels/HistoryPanel';
@@ -53,6 +57,11 @@ const MOBILE_TABS: { id: NonNullable<UiState['mobilePanel']>; labelKey: Translat
 
 export default function MobileWorkspace() {
   const { t } = useI18n();
+  const tier = useViewportTier();
+  const orientation = useOrientation();
+  const isTablet = tier === 'tablet';
+  const isLandscape = orientation === 'landscape';
+  const isLandscapePhone = isLandscape && tier === 'phone';
   const doc = useEditorStore((s) => s.doc);
   const history = useEditorStore((s) => s.history);
   const tool = useEditorStore((s) => s.tool);
@@ -84,8 +93,12 @@ export default function MobileWorkspace() {
     <div className="flex h-full min-h-0 flex-col">
       {/* top bar (safe-area aware) */}
       <div
-        className="flex min-h-11 shrink-0 items-center gap-1 border-b border-[#2c2d33] bg-[#1b1c20] px-2"
-        style={{ paddingTop: 'var(--pf-safe-top)' }}
+        className={`flex ${isLandscapePhone ? 'min-h-9' : 'min-h-11'} shrink-0 items-center gap-1 border-b border-[#2c2d33] bg-[#1b1c20]`}
+        style={{
+          paddingTop: 'var(--pf-safe-top)',
+          paddingLeft: 'calc(0.5rem + var(--pf-safe-left))',
+          paddingRight: 'calc(0.5rem + var(--pf-safe-right))',
+        }}
       >
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{doc.name}</span>
         <Button variant="ghost" size="icon" className="size-11" aria-label={t('mobile.undo')} disabled={history.index < 0} onClick={() => useEditorStore.getState().undo()}>
@@ -135,7 +148,15 @@ export default function MobileWorkspace() {
       {/* canvas + floating zoom */}
       <div ref={workRef} className="pf-workspace relative min-h-0 flex-1 overflow-hidden">
         <CanvasStage />
-        <div className="absolute bottom-3 right-3 z-10 flex flex-col gap-2">
+        {/* always-on inline calc keeps the 0.75rem baseline AND clears the
+            notch/home-indicator in landscape (vars are 0px off-notch) */}
+        <div
+          className="absolute z-10 flex flex-col gap-2"
+          style={{
+            right: 'calc(0.75rem + var(--pf-safe-right))',
+            bottom: 'calc(0.75rem + var(--pf-safe-bottom))',
+          }}
+        >
           <button
             type="button"
             aria-label={t('view.zoomIn')}
@@ -187,8 +208,12 @@ export default function MobileWorkspace() {
 
       {/* tool dock (safe-area aware) */}
       <div
-        className="pf-scroll flex h-14 shrink-0 items-center gap-1 overflow-x-auto border-t border-[#2c2d33] bg-[#1b1c20] px-2"
-        style={{ paddingBottom: 'var(--pf-safe-bottom)' }}
+        className="pf-scroll flex h-14 shrink-0 items-center gap-1 overflow-x-auto border-t border-[#2c2d33] bg-[#1b1c20]"
+        style={{
+          paddingBottom: 'var(--pf-safe-bottom)',
+          paddingLeft: 'calc(0.5rem + var(--pf-safe-left))',
+          paddingRight: 'calc(0.5rem + var(--pf-safe-right))',
+        }}
       >
         {MOBILE_TOOL_ORDER.map((id) => {
           const Icon = toolIcon(id);
@@ -217,9 +242,22 @@ export default function MobileWorkspace() {
         </Button>
       </div>
 
-      {/* slide-up panel sheet */}
+      {/* panel sheet — bottom drawer on portrait phones; tablets and landscape
+          phones get a right-side drawer instead (a 45vh bottom sheet wastes a
+          390px-tall landscape viewport). The sm:max-w override defeats the
+          shadcn base `sm:max-w-sm` (384px) so the intended width renders —
+          tablet tier is always ≥640px where that base clamp is active. */}
       <Sheet open={mobilePanel !== null} onOpenChange={(open) => !open && setMobilePanel(null)}>
-        <SheetContent side="bottom" className="h-[45vh] gap-0 p-0">
+        <SheetContent
+          side={isTablet || isLandscape ? 'right' : 'bottom'}
+          className={
+            isTablet
+              ? 'h-full w-[min(420px,88vw)] sm:max-w-[min(420px,88vw)] p-0 gap-0'
+              : isLandscape
+                ? 'h-full w-[min(360px,85vw)] p-0 gap-0'
+                : 'h-[45vh] gap-0 p-0'
+          }
+        >
           <SheetHeader className="sr-only">
             <SheetTitle>{t('mobile.panels')}</SheetTitle>
           </SheetHeader>
@@ -248,9 +286,13 @@ export default function MobileWorkspace() {
         </SheetContent>
       </Sheet>
 
-      {/* full tools grid sheet */}
+      {/* full tools grid sheet — stays a bottom sheet on every tier; height
+          adapts (roomier on tablets, near-full in landscape-phone) */}
       <Sheet open={mobileToolbarSheet} onOpenChange={setMobileToolbarSheet}>
-        <SheetContent side="bottom" className="h-[65vh] p-4">
+        <SheetContent
+          side="bottom"
+          className={isTablet ? 'h-[60vh] p-4' : isLandscape ? 'h-[80vh] p-4' : 'h-[65vh] p-4'}
+        >
           <SheetHeader className="p-0 pb-2">
             <SheetTitle className="text-sm">{t('mobile.tools')}</SheetTitle>
           </SheetHeader>

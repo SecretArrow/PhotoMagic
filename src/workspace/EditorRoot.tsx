@@ -31,7 +31,7 @@ import { loadProject } from '../documents/project';
 import { I18nProvider, useI18n } from '../i18n';
 import { composeDocument } from '../engine/render';
 import { toast } from '../hooks/use-toast';
-import { useIsDesktop } from './useIsDesktop';
+import { useViewportTier, useOrientation } from './useViewportTier';
 import DesktopWorkspace from './DesktopWorkspace';
 import MobileWorkspace from './MobileWorkspace';
 import GlobalKeys from './GlobalKeys';
@@ -48,7 +48,8 @@ export default function EditorRoot() {
 }
 
 function Workspace() {
-  const isDesktop = useIsDesktop();
+  const tier = useViewportTier();
+  const orientation = useOrientation();
   useEffect(() => {
     // dev debugging handle (harmless in prod)
     (window as unknown as Record<string, unknown>).__pfStore = useEditorStore;
@@ -144,8 +145,12 @@ function Workspace() {
   };
 
   return (
-    <div className="pf-workspace h-[100dvh] w-full overflow-hidden">
-      {isDesktop ? <DesktopWorkspace /> : <MobileWorkspace />}
+    <div
+      className="pf-workspace h-[100dvh] w-full overflow-hidden"
+      data-tier={tier}
+      data-orientation={orientation}
+    >
+      {tier === 'desktop' ? <DesktopWorkspace /> : <MobileWorkspace />}
       <GlobalKeys />
       <DialogHost />
 

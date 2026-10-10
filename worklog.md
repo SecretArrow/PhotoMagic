@@ -476,3 +476,70 @@ Stage Summary:
 - v1.5: crop Apply/Cancel buttons + key forwarding (crop/pen/lasso keyboard flows restored) + exact-modifier shortcut matching (keyboard undo/redo/etc. restored) + 8 shortcut regression tests
 - Sweep result: ~50/50 items pass after fixes; 3 real bugs found & fixed; 0 BLOCKED
 - Gates: tsc 0; vitest 174/174 (14 files); eslint 0 errors; i18n 458=458
+
+---
+Task ID: 21-b
+Agent: general-purpose
+Task: v1.6 adaptive mobile shell — tablet side-drawer, phone-landscape panels, safe-area left/right
+
+Work Log:
+- Read worklog (Task 19/20 conventions), MobileWorkspace.tsx fully, useViewportTier.ts contract (read-only), sheet.tsx (side prop + base classes — side="right" carries `inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm`), confirmed cn() = twMerge(clsx) so later classes win
+- Hooked the contract: useViewportTier() + useOrientation() (unconditional top-level hooks) → isTablet / isLandscape / isLandscapePhone derived
+- Panel sheet: side="right" drawer on tablet (`h-full w-[min(420px,88vw)] p-0 gap-0`) and landscape phone (`h-full w-[min(360px,85vw)] p-0 gap-0`); portrait phone keeps EXACTLY `side="bottom" className="h-[45vh] gap-0 p-0"`. Added `sm:max-w-[min(420px,88vw)]` to the tablet class: the shadcn base `sm:max-w-sm` (384px) is always active on the tablet tier (640–1023px) and would silently clamp 420→384; the sm-variant override merges cleanly via twMerge. TabsList horizontal scroll + trailing spacer kept (close X is absolute top-right on the drawer too)
+- Tools grid sheet: side="bottom" on every tier; height tablet `h-[60vh]`, landscape phone `h-[80vh]`, portrait phone keeps `h-[65vh]`; grid-cols-4 untouched
+- Top bar: `min-h-9` ONLY on landscape phone (44px size-11 children still size the bar — targets unchanged, spec-exact); merged safe-area left/right into the existing style object via `calc(0.5rem + var(--pf-safe-left/right))` — calc preserves the px-2 baseline (a plain `var(--pf-safe-left)` inline style would override the px-2 class to 0px on non-notched devices); px-2 class dropped to avoid dead styles; `paddingTop: var(--pf-safe-top)` unchanged
+- Tool dock: same left/right calc merge alongside the existing `paddingBottom: var(--pf-safe-bottom)`
+- Zoom floating stack: always-on inline `right: calc(0.75rem + var(--pf-safe-right))`, `bottom: calc(0.75rem + var(--pf-safe-bottom))`; Tailwind `bottom-3 right-3` classes dropped (0.75rem baseline lives inside the calc — pixel-identical when vars are 0px)
+- i18n: zero new keys needed — all labels already exist
+
+Stage Summary:
+- Behavior matrix: portrait phone → unchanged (bottom h-[45vh] panel sheet, bottom h-[65vh] tools sheet, min-h-11 bar); landscape phone → panel sheet = right drawer `h-full w-[min(360px,85vw)] p-0 gap-0`, tools sheet = bottom `h-[80vh] p-4`, top bar `min-h-9`; tablet portrait AND landscape → panel sheet = right drawer `h-full w-[min(420px,88vw)] sm:max-w-[min(420px,88vw)] p-0 gap-0`, tools sheet = bottom `h-[60vh] p-4`, top bar/dock layout unchanged; ALL tiers → top bar + dock padding-left/right = calc(0.5rem + safe-left/right), zoom stack offset = calc(0.75rem + safe-right/bottom) — 0px off-notch, so unaffected devices render pixel-identical to before
+- Every feature still wired exactly: undo/redo, ⋯ overflow menu (open image/new/image size/canvas size/filter gallery/preferences/storage/about), hidden file input, zoom stack (in/out/1:1/fit), tool dock + grid sheet, panel tabs, OptionsBar; all touch targets ≥44px (size-11 buttons, h-11 w-11 dock, min-h-11 tabs)
+- Gates: bunx tsc --noEmit → exit 0, no output; bunx eslint src/workspace/MobileWorkspace.tsx → 0 errors, 0 new warnings; bunx vitest run → 174/174 (14 files); i18n parity 458=458
+- Files touched: src/workspace/MobileWorkspace.tsx ONLY (dictionaries.ts untouched — no key added)
+- Notes for orchestrator E2E sweep: rotation with a sheet open swaps side/height classes in place (Radix content stays mounted — no remount needed, acceptable per spec); OptionsBar (NOT owned) sits between canvas and dock and has NO safe-area left/right handling — on notched landscape devices its content can sit under the notch; sheet.tsx base `sm:max-w-sm` is a footgun for any future right-side sheet — handled locally with an sm: override here
+
+---
+Task ID: 21-a
+Agent: general-purpose
+Task: v1.6 responsive hardening — viewport meta (interactiveWidget/colorScheme) + globals.css platform hardening
+
+Work Log:
+- Read worklog (Tasks 19/20) for conventions; read owned files src/app/layout.tsx + src/app/globals.css in full; read src/components/ui/dialog.tsx (read-only) to confirm the Radix content slot attribute
+- Confirmed dialog.tsx uses data-slot="dialog-content" on DialogPrimitive.Content → the short-viewport guard targets exactly that attribute
+- layout.tsx: extended `viewport` Viewport export with interactiveWidget: "resizes-content" (Android Chrome 108+ keyboard resizes layout viewport) and colorScheme: "dark" (dark native form controls/scrollbars); all existing fields kept (width device-width, initialScale 1, maximumScale 1, userScalable false, viewportFit cover, themeColor #17181c); added formatDetection: { telephone: false } to `metadata` (stops iOS Safari auto-linking number-like text); both new Viewport fields type-checked cleanly against Next 16 types, no shim needed
+- globals.css: added "Responsive & platform hardening" section directly after the safe-area :root vars block; verified cascade safety of the touch-action rule — it is defined BEFORE .pf-no-select/.pf-canvas in source order, so those later class rules keep touch-action:none on the painting canvas (button selector is lower specificity; [role="button"] ties on specificity but loses to the later source order)
+- Left the pre-existing prefers-reduced-motion block for .pf-ants untouched (no reformat of unrelated CSS); the new duplicated block only adds stroke-dasharray: 4 4, cascade-equivalent (static dashes either way)
+- Verification: bunx tsc --noEmit → exit 0, no output; bunx eslint src/app/layout.tsx → exit 0, no errors
+- Appended this entry (append-only)
+
+Stage Summary:
+- layout.tsx: metadata += formatDetection { telephone: false }; viewport += interactiveWidget "resizes-content", colorScheme "dark"
+- globals.css new section (after :root safe-area vars), exact blocks:
+  1. @supports not (height: 100dvh) { .pf-workspace { height: 100vh; } } — old-iOS (<15.4) dvh fallback, guarded so the Tailwind h-[100dvh] utility stays authoritative elsewhere
+  2. body { -webkit-tap-highlight-color: transparent; } + button, [role="button"] { touch-action: manipulation; } — tap comfort; canvas touch-action:none unaffected
+  3. .pf-safe-x { padding-left: var(--pf-safe-left); padding-right: var(--pf-safe-right); } — reusable landscape-notch helper; available for agent 21-b's MobileWorkspace styles (optional, no cross-dependency)
+  4. @media (max-height: 700px) { [data-slot="dialog-content"] { max-height: 92dvh; overflow-y: auto; } } — short-viewport dialog guard (Radix portals to body, slot-verified)
+  5. @media (prefers-reduced-motion: reduce) { .pf-ants { animation: none; stroke-dasharray: 4 4; } } — marching ants become static dashes
+- Gates: tsc exit 0 (silent); eslint layout.tsx exit 0 (0 errors, 0 warnings)
+- Note for E2E sweep: viewport meta now emits interactive-widget=resizes-content & color-scheme dark; on Android Chrome the visual viewport will resize under the keyboard (expect smaller viewport height in screenshots when a text input is focused); on old-iOS profiles the workspace falls back to 100vh
+
+---
+Task ID: 21
+Agent: main (Super Z)
+Task: v1.6 — responsive layout PC/Android/iOS (3-tier + platform hardening) atas permintaan user "Buat supaya support layout view pc/android/ios"
+
+Work Log:
+- Audit baseline: shell biner lama (useIsDesktop ≥1024) → MobileWorkspace di bawahnya; sudah ada h-[100dvh], safe-area top/bottom, 44px target; gap: tier tablet hilang, safe-left/right tak dipakai, panel landscape phone 45vh tak terpakai, tanpa fallback dvh iOS lama, tanpa interactiveWidget keyboard Android
+- Kontrak (orchestrator): src/workspace/useViewportTier.ts baru — useViewportTier() ('desktop' ≥1024 / 'tablet' 640–1023.98 / 'phone' <640, matchMedia-driven), useOrientation(), useStandalone(); hapus useIsDesktop.ts (dead code); EditorRoot: switch tier + atribut data-tier/data-orientation di root .pf-workspace
+- Wave A paralel (ownership file terpisah):
+  - 21-a (layout.tsx + globals.css): viewport interactiveWidget:'resizes-content' + colorScheme:'dark', metadata formatDetection telephone:false; CSS: fallback @supports not(100dvh)→100vh (.pf-workspace), tap-highlight transparan + touch-action:manipulation untuk button/[role=button] (canvas .pf-no-select tak terpengaruh), util .pf-safe-x, guard dialog layar pendek @media max-height:700px → [data-slot=dialog-content] max-height:92dvh overflow-y:auto, prefers-reduced-motion untuk .pf-ants
+  - 21-b (MobileWorkspace.tsx): tablet (640–1023) → panel sheet side=right full-height w-[min(420px,88vw)] (+override sm:max-w-[min(420px,88vw)] melawan base sm:max-w-sm sheet.tsx), tools grid bottom 60vh; phone landscape → panel side=right w-[min(360px,85vw)], top bar min-h-9, tools grid 80vh; safe-left/right calc(0.5rem+var) di top bar + dock; zoom stack inline calc(0.75rem+var(--pf-safe-right/bottom)); phone portrait TIDAK berubah (bottom 45vh / grid 65vh)
+- Fix lanjutan oleh orchestrator (laporan 21-b): OptionsBar Bar() px-3 → calc(0.75rem+var(--pf-safe-left/right)) inline (pixel-identical di perangkat tanpa notch)
+- E2E sweep 11 viewport (scripts/e2e-v16-sweep.sh, server+probe satu sesi bash — sandbox mereap background process antar-panggilan): 1920×1080 desktop✓, 1366×768 desktop✓, 1024×768 desktop✓, 1023×768 tablet✓, 820×1180 tablet+drawer kanan 420×full✓ (screenshot), 1180×820 desktop (width-based, perilaku lama konsisten), 640×960 tablet✓, 639×960 phone✓, 390×844 phone+bottom-sheet 390×380✓ (screenshot), 844×390 → tier tablet → drawer kanan full-height✓ (screenshot; cabang phone-landscape hanya terpicu <640 lebar — net behavior tetap benar karena tablet tier sudah memberi drawer samping), 360×800 phone✓; rotasi 820×1180→1180×820 dgn sheet terbuka → shell swap ke desktop, sheet tertutup rapi (state mobilePanel persist, tidak crash); meta viewport terverifikasi berisi interactive-widget=resizes-content; dialog export di 1366×640 H=168 muat; smoke akhir phone/desktop OK
+- Screenshot bukti: download/e2e-v16/*.png (pc, tablet-portrait-panels, phone-portrait-panels, phone-landscape-panels, dll.)
+
+Stage Summary:
+- v1.6: layout 3-tier purpose-built — PC (desktop shell penuh), tablet (drawer samping 420px), phone portrait (bottom sheet 45vh), phone landscape kecil (drawer 360px + top bar kompak); hardening platform: keyboard Android resizes-content, dark form controls iOS/Android, fallback dvh iOS<15.4, tap-highlight/touch-action, guard dialog layar pendek, reduced-motion, safe-area 4 sisi (top/bottom/left/right) di top bar/dock/OptionsBar/zoom stack
+- Gates: tsc 0; vitest 174/174 (14 file); eslint 0 error (14 warning lama); i18n 458=458 (0 kunci baru); E2E 11 viewport + rotasi + smoke lolos
+- Catatan jujur: iPad/tablet landscape ≥1024 tetap masuk desktop shell (desain width-based pra-ada, cocok untuk layar besar); rotasi lintas batas 1024 menutup sheet mobile (shell swap, tanpa crash, state persist)

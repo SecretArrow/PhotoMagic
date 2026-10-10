@@ -136,6 +136,58 @@
   --pf-safe-right: env(safe-area-inset-right, 0px);
 }
 
+/* ------------------------------------------------------------------ */
+/* Responsive & platform hardening                                     */
+/* ------------------------------------------------------------------ */
+
+/* Old-iOS fallback: iOS < 15.4 has no dvh units, so the Tailwind
+   h-[100dvh] utility on .pf-workspace is dropped → zero-height app.
+   The @supports guard is REQUIRED: unlayered CSS beats layered
+   utilities, so an unguarded height override would break dvh devices. */
+@supports not (height: 100dvh) {
+  .pf-workspace {
+    height: 100vh;
+  }
+}
+
+/* Tap comfort on touch platforms: no grey tap flash on body, and no
+   300ms/double-tap-zoom delay on UI chrome. The painting canvas keeps
+   its own touch-action: none (.pf-no-select / .pf-canvas, defined after
+   this block — they win the cascade over the selectors below). */
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* Landscape notch breathing room helper — add .pf-safe-x to a full-width
+   row/toolbar to keep content clear of the left/right display cutouts. */
+.pf-safe-x {
+  padding-left: var(--pf-safe-left);
+  padding-right: var(--pf-safe-right);
+}
+
+/* Short viewports (landscape phones, small laptops): Radix dialogs are
+   portaled to <body>, so scope the guard by data-slot. Keeps tall
+   dialogs inside the visible area and scrollable. */
+@media (max-height: 700px) {
+  [data-slot="dialog-content"] {
+    max-height: 92dvh;
+    overflow-y: auto;
+  }
+}
+
+/* Reduce motion: the marching-ants selection overlay becomes static
+   dashes for motion-sensitive users. */
+@media (prefers-reduced-motion: reduce) {
+  .pf-ants {
+    animation: none;
+    stroke-dasharray: 4 4;
+  }
+}
+
 .pf-no-select {
   user-select: none;
   -webkit-user-select: none;

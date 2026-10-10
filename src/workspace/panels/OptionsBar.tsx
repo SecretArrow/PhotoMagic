@@ -50,7 +50,16 @@ function Bar({ children }: { children: React.ReactNode }) {
     // Sliders/selects inside a content-sized row collapse to 0px (flex-1 with
     // no basis) — give them explicit floors so the strip stays usable on
     // narrow (and desktop) viewports; the bar itself scrolls horizontally.
-    <div className="pf-scroll flex h-10 shrink-0 items-center gap-3 overflow-x-auto border-b border-[#2c2d33] bg-[#1e1f24] px-3 [&_[data-slot=select-trigger]]:min-w-32 [&_[data-slot=slider]]:w-24 [&_[data-slot=slider]]:shrink-0">
+    <div
+      className="pf-scroll flex h-10 shrink-0 items-center gap-3 overflow-x-auto border-b border-[#2c2d33] bg-[#1e1f24] [&_[data-slot=select-trigger]]:min-w-32 [&_[data-slot=slider]]:w-24 [&_[data-slot=slider]]:shrink-0"
+      // px-3 baseline expressed as calc so notched-landscape devices (iOS)
+      // keep the first/last control clear of the notch; 0px inset devices
+      // resolve to exactly 0.75rem — pixel-identical to the old px-3.
+      style={{
+        paddingLeft: 'calc(0.75rem + var(--pf-safe-left))',
+        paddingRight: 'calc(0.75rem + var(--pf-safe-right))',
+      }}
+    >
       {children}
     </div>
   );

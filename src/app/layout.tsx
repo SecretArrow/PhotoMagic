@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   description:
     "Professional-grade image editing that runs entirely in your browser. Layers, masks, filters, text, vectors — free, private, no account required. Your images never leave your device.",
   keywords: ["photo editor", "image editing", "layers", "filters", "free editor", "browser editor", "PixelForge"],
+  formatDetection: { telephone: false },
   authors: [{ name: "PixelForge Studio contributors" }],
   manifest: "/manifest.json",
   applicationName: "PixelForge Studio",
@@ -28,6 +29,11 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
+  // Android Chrome 108+: the on-screen keyboard resizes the layout viewport
+  // so dialogs/inputs stay visible; harmless (ignored) elsewhere.
+  interactiveWidget: "resizes-content",
+  // iOS/Android render dark native form controls & scrollbars.
+  colorScheme: "dark",
   themeColor: "#17181c",
 };
 
